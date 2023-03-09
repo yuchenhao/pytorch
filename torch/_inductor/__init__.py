@@ -1,8 +1,14 @@
+import sys
 from typing import Any, Dict, List, Optional
 
 import torch.fx
+from .._config_utils import make_config_dataclass
+from . import config
 
-__all__ = ["compile", "list_mode_options", "list_options"]
+InductorConfig = type(config)
+
+
+__all__ = ["compile", "list_mode_options", "list_options", "config"]
 
 
 def compile(
