@@ -779,6 +779,54 @@ class TestOptim(TestCase):
                 for k in st_p_state:
                     self.assertEqual(st_p_state[k], mt_p_state[k])
 
+    # ref: https://github.com/pytorch/pytorch/issues/100701
+    def _test_derived_optimizers_with_zero_size_params(self, optimizer_pairs_with_flags, flag):
+        if not torch.cuda.is_available():
+            return
+
+        def _test_impl(optimizer_constructor, kwargs, insert_empty_to_first):
+            model = torch.nn.Linear(2, 3, bias=True, device="cuda")
+            reference_model = torch.nn.Linear(2, 3, bias=True, device="cuda")
+
+            # sync parameters
+            with torch.no_grad():
+                model.weight.copy_(reference_model.weight)
+                model.bias.copy_(reference_model.bias)
+
+            empty_tensor = torch.tensor([], requires_grad=True, device="cuda")
+            params = [model.weight, model.bias]
+            if insert_empty_to_first:
+                params.insert(0, empty_tensor)
+            else:
+                params.append(empty_tensor)
+            optimizer = optimizer_constructor(params, **kwargs)
+            reference_optimizer = optimizer_constructor(reference_model.parameters(), **kwargs)
+
+            random_input = torch.randn(5, 2, device="cuda")
+
+            # Check that state dict are equal before optimizer step
+            self.assertEqual(model.state_dict(), reference_model.state_dict())
+
+            model(random_input).sum().backward()
+            empty_tensor.grad = torch.tensor([], requires_grad=False, device="cuda")
+            reference_model(random_input).sum().backward()
+
+            if flag == "fused" and not insert_empty_to_first:
+                with self.assertRaises(RuntimeError):
+                    optimizer.step()
+                    return
+
+            optimizer.step()
+            reference_optimizer.step()
+
+            # Check that state dict are equal after optimizer step
+            self.assertEqual(model.state_dict(), reference_model.state_dict())
+
+        for optimizer_constructor, params in optimizer_pairs_with_flags:
+            params[flag] = True
+            _test_impl(optimizer_constructor, params, True)
+            _test_impl(optimizer_constructor, params, False)
+
     def test_multi_tensor_optimizers(self):
         optimizer_pairs_with_flags = [
             (optim.Adam, dict(weight_decay=1.0, amsgrad=True, fused=False)),
@@ -820,6 +868,7 @@ class TestOptim(TestCase):
             (optim.Adagrad, dict(weight_decay=1)),
         ]
         self._test_derived_optimizers(optimizer_pairs_with_flags, "foreach")
+        self._test_derived_optimizers_with_zero_size_params(optimizer_pairs_with_flags, "foreach")
 
     @unittest.skipIf(not TEST_MULTIGPU, "only one GPU detected")
     def test_multi_tensor_optimizers_with_varying_tensors(self):
