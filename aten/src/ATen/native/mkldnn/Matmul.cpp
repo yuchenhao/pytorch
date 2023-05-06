@@ -25,6 +25,13 @@ bool use_mkldnn_bf16_matmul(
   return false;
 }
 
+bool use_mkldnn_fp16_matmul(
+    const Tensor& mat1,
+    const Tensor& mat2,
+    const Tensor& result_opt){
+  return false;
+}
+
 bool mkldnn_bf16_gemm(
     TransposeType transa, TransposeType transb,
     int64_t m, int64_t n, int64_t k,
@@ -35,6 +42,7 @@ bool mkldnn_bf16_gemm(
     c10::BFloat16 *c, int64_t ldc) {
   return false;
 }
+
 
 } // namespace native
 } // namespace at
@@ -51,6 +59,12 @@ static bool use_mkldnn_bf16_matmul() {
   return (
       at::globalContext().userEnabledMkldnn() &&
       mkldnn_bf16_device_check());
+}
+
+static bool use_mkldnn_fp16_matmul() {
+  return (
+      at::globalContext().userEnabledMkldnn() &&
+      mkldnn_fp16_device_check());
 }
 
 bool mkldnn_bf16_gemm(
@@ -118,6 +132,8 @@ bool mkldnn_bf16_gemm(
   return true;
 }
 
+
+
 void mkldnn_matmul(
     const Tensor &mat1,
     const Tensor &mat2,
@@ -131,24 +147,19 @@ void mkldnn_matmul(
               "mkldnn_matmul:  unsupported dims for mat and mat2");
 
 #if defined(__aarch64__)
-  // oneDNN fast-maths mode (enabled by setting the environment variable ONEDNN_DEFAULT_FPMATH_MODE=BF16) will dispatch
-  // fp32 inputs to bf16 kernels where HW permits. So, both fp32 and bf16 inputs are permitted.
-  TORCH_CHECK((mat1.scalar_type() == mat2.scalar_type()) && (mat1.scalar_type() == result.scalar_type()) &&
-              ((mat1.scalar_type() == at::kFloat) || (mat1.scalar_type() == at::kBFloat16)),
-              "mkldnn_matmul:  only enabled for fp32 and bf16 path");
-  // device needs to support bf16 if the inputs are of bf16 type
-  if (mat1.scalar_type() == at::kBFloat16) {
-    TORCH_CHECK(mkldnn_bf16_device_check_arm(),
-                "mkldnn_matmul: mkldnn_matmul bf16 path needs a cpu with bf16 support");
-  }
-#else
-  TORCH_CHECK(mkldnn_bf16_device_check(),
-    "mkldnn_matmul: mkldnn_matmul bf16 path needs the cpu support avx512bw, avx512vl and avx512dq, or AWS Graviton3");
-
-   TORCH_CHECK(mat1.scalar_type() == at::kBFloat16 &&
-               mat2.scalar_type() == at::kBFloat16 &&
-               result.scalar_type() == at::kBFloat16, "mkldnn_matmul:  only enabled for bf16 path");
+  if (mkldnn_bf16_device_check_arm()) {
+     //onednn fastmath mode can leverage bf16 HW even for the fp32 input, e.g. Arm Neoverse V1
+     //so, don't restrict the mkldnn_matmul only for bf16 inputs, allow it for float as well
+     TORCH_CHECK((mat1.scalar_type() == mat2.scalar_type()) && (mat1.scalar_type() == result.scalar_type()) &&
+                 ((mat1.scalar_type() == at::kFloat) || (mat1.scalar_type() == at::kBFloat16)),
+                 "mkldnn_matmul:  only enabled for fp32 and bf16 path");
+  } else
 #endif
+  {
+     TORCH_CHECK((mat1.scalar_type() == at::kBFloat16 || mat1.scalar_type() == at::kHalf) &&
+                 mat2.scalar_type() == mat1.scalar_type() &&
+                 result.scalar_type() == mat1.scalar_type(), "mkldnn_matmul:  only enabled for bf16 and half path");
+  }
 
   auto mat1_unsqueezed = mat1.dim() == 1 ? mat1.unsqueeze(0) : mat1;
   auto mat2_unsqueezed = mat2.dim() == 1 ? mat2.unsqueeze(1) : mat2;
@@ -249,6 +260,28 @@ bool use_mkldnn_bf16_matmul(
         mat2.numel() != 0 &&
         checksize(mat1, mat2));
   }
+}
+
+bool use_mkldnn_fp16_matmul(
+    const Tensor& mat1,
+    const Tensor& mat2,
+    const Tensor& result) {
+
+    return (
+      use_mkldnn_fp16_matmul() &&
+      mat1.scalar_type() == kHalf &&
+      mat2.scalar_type() == kHalf &&
+      (!result.defined() || result.scalar_type() == kHalf) &&
+      mat1.numel() != 0 &&
+      mat2.numel() != 0 &&
+      checksize(mat1, mat2));
+}
+
+bool use_mkldnn_lower_precision_matmul(
+    const Tensor& mat1,
+    const Tensor& mat2,
+    const Tensor& result) {
+    return (use_mkldnn_bf16_matmul(mat1, mat2, result) || use_mkldnn_fp16_matmul(mat1, mat2, result));
 }
 
 } // namespace native
