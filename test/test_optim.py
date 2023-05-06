@@ -793,8 +793,8 @@ class TestOptim(TestCase):
                 model.weight.copy_(reference_model.weight)
                 model.bias.copy_(reference_model.bias)
 
-            empty_tensor = torch.tensor([], requires_grad=True, device="cuda")
             params = [model.weight, model.bias]
+            empty_tensor = torch.tensor([], requires_grad=True, device="cuda")
             if insert_empty_to_first:
                 params.insert(0, empty_tensor)
             else:
@@ -812,15 +812,14 @@ class TestOptim(TestCase):
             reference_model(random_input).sum().backward()
 
             if flag == "fused" and not insert_empty_to_first:
-                with self.assertRaises(RuntimeError):
+                with self.assertRaisesRegex(RuntimeError, "last tensor cannot be"):
                     optimizer.step()
-                    return
+            else:
+                optimizer.step()
+                reference_optimizer.step()
 
-            optimizer.step()
-            reference_optimizer.step()
-
-            # Check that state dict are equal after optimizer step
-            self.assertEqual(model.state_dict(), reference_model.state_dict())
+                # Check that state dict are equal after optimizer step
+                self.assertEqual(model.state_dict(), reference_model.state_dict())
 
         for optimizer_constructor, params in optimizer_pairs_with_flags:
             params[flag] = True
@@ -924,6 +923,7 @@ class TestOptim(TestCase):
             ),
         ))
         self._test_derived_optimizers(optimizer_pairs_with_flags, "fused")
+        self._test_derived_optimizers_with_zero_size_params(optimizer_pairs_with_flags, "fused")
 
     @unittest.skipIf(not TEST_MULTIGPU, "only one GPU detected")
     def test_fused_optimizers_with_varying_tensors(self):
