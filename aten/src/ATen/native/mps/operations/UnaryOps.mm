@@ -19,6 +19,7 @@
 #include <ATen/ops/cosh_native.h>
 #include <ATen/ops/cumsum_native.h>
 #include <ATen/ops/erf_native.h>
+#include <ATen/ops/erfinv_native.h>
 #include <ATen/ops/exp2_native.h>
 #include <ATen/ops/exp_native.h>
 #include <ATen/ops/expm1_native.h>
@@ -247,6 +248,53 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
                                       falsePredicateTensor:[mpsGraph floorWithTensor:inputTensor name:nil]
                                                       name:nil];
     return [mpsGraph subtractionWithPrimaryTensor:inputTensor secondaryTensor:truncTensor name:nil];
+  });
+}
+
+TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
+  TORCH_CHECK(isFloatingType(self.scalar_type()), "erfinv_out_mps is only implemented for floating types");
+  mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
+    auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:inputTensor.dataType];
+    auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:inputTensor.dataType];
+    auto halfTensor = [mpsGraph constantWithScalar:0.5 dataType:inputTensor.dataType];
+    auto oneTensor = [mpsGraph constantWithScalar:1.0 dataType:inputTensor.dataType];
+    auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:inputTensor.dataType];
+    auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:inputTensor.dataType];
+    auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:inputTensor.dataType];
+
+    auto inputSquared = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
+    auto logTerm = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor
+                                                                        secondaryTensor:inputSquared
+                                                                                   name:nil]
+                                            name:nil];
+    auto commonTerm = [mpsGraph
+        additionWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                      secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:piTensor
+                                                                                                secondaryTensor:aTensor
+                                                                                                           name:nil]
+                                                                 name:nil]
+                  secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:logTerm secondaryTensor:halfTensor name:nil]
+                             name:nil];
+    auto commonTermSquared = [mpsGraph multiplicationWithPrimaryTensor:commonTerm secondaryTensor:commonTerm name:nil];
+    auto diffTerm = [mpsGraph subtractionWithPrimaryTensor:commonTermSquared
+                                           secondaryTensor:[mpsGraph divisionWithPrimaryTensor:logTerm
+                                                                               secondaryTensor:aTensor
+                                                                                          name:nil]
+                                                      name:nil];
+    auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:diffTerm name:nil];
+    auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:commonTerm name:nil];
+    auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
+    auto predicateTensor = [mpsGraph greaterThanOrEqualToWithPrimaryTensor:inputTensor
+                                                           secondaryTensor:zeroTensor
+                                                                      name:nil];
+    auto resultPositive = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor:oneTensor name:nil];
+    auto resultNegative = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot
+                                                    secondaryTensor:negOneTensor
+                                                               name:nil];
+    return [mpsGraph selectWithPredicateTensor:predicateTensor
+                           truePredicateTensor:resultPositive
+                          falsePredicateTensor:resultNegative
+                                          name:nil];
   });
 }
 
