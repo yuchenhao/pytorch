@@ -262,27 +262,27 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:inputTensor.dataType];
     auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:inputTensor.dataType];
 
-    auto inputSquared = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
-    auto logTerm = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor
-                                                                        secondaryTensor:inputSquared
+    auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
+    auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor
+                                                                        secondaryTensor:A
                                                                                    name:nil]
                                             name:nil];
-    auto commonTerm = [mpsGraph
+    auto C = [mpsGraph
         additionWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
                                                       secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:piTensor
                                                                                                 secondaryTensor:aTensor
                                                                                                            name:nil]
                                                                  name:nil]
-                  secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:logTerm secondaryTensor:halfTensor name:nil]
+                  secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:B secondaryTensor:halfTensor name:nil]
                              name:nil];
-    auto commonTermSquared = [mpsGraph multiplicationWithPrimaryTensor:commonTerm secondaryTensor:commonTerm name:nil];
-    auto diffTerm = [mpsGraph subtractionWithPrimaryTensor:commonTermSquared
-                                           secondaryTensor:[mpsGraph divisionWithPrimaryTensor:logTerm
+    auto CSquared = [mpsGraph multiplicationWithPrimaryTensor:C secondaryTensor:C name:nil];
+    auto CSquaredMinusBDivA = [mpsGraph subtractionWithPrimaryTensor:CSquared
+                                           secondaryTensor:[mpsGraph divisionWithPrimaryTensor:B
                                                                                secondaryTensor:aTensor
                                                                                           name:nil]
                                                       name:nil];
-    auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:diffTerm name:nil];
-    auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:commonTerm name:nil];
+    auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:CSquaredMinusBDivA name:nil];
+    auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:C name:nil];
     auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
     auto predicateTensor = [mpsGraph greaterThanOrEqualToWithPrimaryTensor:inputTensor
                                                            secondaryTensor:zeroTensor
