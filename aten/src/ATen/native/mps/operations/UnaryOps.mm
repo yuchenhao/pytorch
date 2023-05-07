@@ -252,7 +252,6 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 }
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
-  TORCH_CHECK(isFloatingType(self.scalar_type()), "erfinv_out_mps is only implemented for floating types");
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:inputTensor.dataType];
     auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:inputTensor.dataType];
