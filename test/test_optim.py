@@ -811,20 +811,18 @@ class TestOptim(TestCase):
             empty_tensor.grad = torch.tensor([], requires_grad=False, device="cuda")
             reference_model(random_input).sum().backward()
 
-            if flag == "fused" and not insert_empty_to_first:
-                with self.assertRaisesRegex(RuntimeError, "last tensor cannot be"):
-                    optimizer.step()
-            else:
-                optimizer.step()
-                reference_optimizer.step()
+            optimizer.step()
+            reference_optimizer.step()
 
-                # Check that state dict are equal after optimizer step
-                self.assertEqual(model.state_dict(), reference_model.state_dict())
+            # Check that state dict are equal after optimizer step
+            self.assertEqual(model.state_dict(), reference_model.state_dict(), atol=0, rtol=0)
 
         for optimizer_constructor, params in optimizer_pairs_with_flags:
             params[flag] = True
-            _test_impl(optimizer_constructor, params, True)
-            _test_impl(optimizer_constructor, params, False)
+            with self.subTest(first_is_empty=True):
+                _test_impl(optimizer_constructor, params, True)
+            with self.subTest(first_is_empty=False):
+                _test_impl(optimizer_constructor, params, False)
 
     def test_multi_tensor_optimizers(self):
         optimizer_pairs_with_flags = [
