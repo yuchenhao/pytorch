@@ -263,10 +263,8 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:inputTensor.dataType];
 
     auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
-    auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor
-                                                                        secondaryTensor:A
-                                                                                   name:nil]
-                                            name:nil];
+    auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:A name:nil]
+                                      name:nil];
     auto C = [mpsGraph
         additionWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
                                                       secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:piTensor
@@ -277,10 +275,10 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
                              name:nil];
     auto CSquared = [mpsGraph multiplicationWithPrimaryTensor:C secondaryTensor:C name:nil];
     auto CSquaredMinusBDivA = [mpsGraph subtractionWithPrimaryTensor:CSquared
-                                           secondaryTensor:[mpsGraph divisionWithPrimaryTensor:B
-                                                                               secondaryTensor:aTensor
-                                                                                          name:nil]
-                                                      name:nil];
+                                                     secondaryTensor:[mpsGraph divisionWithPrimaryTensor:B
+                                                                                         secondaryTensor:aTensor
+                                                                                                    name:nil]
+                                                                name:nil];
     auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:CSquaredMinusBDivA name:nil];
     auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:C name:nil];
     auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
