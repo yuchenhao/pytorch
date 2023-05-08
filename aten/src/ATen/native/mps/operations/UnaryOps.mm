@@ -252,7 +252,7 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 }
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
-  //TORCH_CHECK(isFloatingType(self.scalar_type()), "erfinv_out_mps is only implemented for floating types");
+  // TORCH_CHECK(isFloatingType(self.scalar_type()), "erfinv_out_mps is only implemented for floating types");
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:inputTensor.dataType];
     auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:inputTensor.dataType];
@@ -260,8 +260,11 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto oneTensor = [mpsGraph constantWithScalar:1.0 dataType:inputTensor.dataType];
     auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:inputTensor.dataType];
     auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:inputTensor.dataType];
-    auto aTensor = [mpsGraph constantWithScalar:0.140012288686666606004249491386120822 dataType:inputTensor.dataType];
-    auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:inputTensor.dataType];
+    auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:inputTensor.dataType];
+    auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518
+                                                  dataType:inputTensor.dataType];
+    auto infinityTensor = [mpsGraph constantWithScalar:INFINITY dataType:inputTensor.dataType];
+    auto negInfinityTensor = [mpsGraph constantWithScalar:-1.0 * INFINITY dataType:inputTensor.dataType];
     auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
     auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:A name:nil]
                                       name:nil];
@@ -290,37 +293,57 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
                                                     secondaryTensor:negOneTensor
                                                                name:nil];
     auto estimated = [mpsGraph selectWithPredicateTensor:predicateTensor
-                           truePredicateTensor:resultPositive
-                          falsePredicateTensor:resultNegative
-                                          name:nil];
+                                     truePredicateTensor:resultPositive
+                                    falsePredicateTensor:resultNegative
+                                                    name:nil];
     // add 2 steps of Newton-Raphson iteration to improve accuracy
-    // adopted from   x = x - (std::erf(x) - y) / ((static_cast<T>(2.0)/static_cast<T>(std::sqrt(c10::pi<double>)))*std::exp(-x*x));
-    // pass 1
+    // adopted from   x = x - (std::erf(x) - y) /
+    // ((static_cast<T>(2.0)/static_cast<T>(std::sqrt(c10::pi<double>)))*std::exp(-x*x)); pass 1
     auto negEstimated = [mpsGraph multiplicationWithPrimaryTensor:estimated secondaryTensor:negOneTensor name:nil];
     auto estimatedSquared = [mpsGraph multiplicationWithPrimaryTensor:negEstimated secondaryTensor:estimated name:nil];
     auto estimatedSquaredExp = [mpsGraph exponentWithTensor:estimatedSquared name:nil];
-    auto twoDivSquareRootPi = [mpsGraph divisionWithPrimaryTensor:twoTensor secondaryTensor:piSquareRootTensor name:nil];
-    auto gradientDenominator= [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi
-                                                   secondaryTensor:estimatedSquaredExp
-                                                              name:nil];
-    auto changeErf = [mpsGraph subtractionWithPrimaryTensor: [mpsGraph erfWithTensor:estimated name:nil]
-                              secondaryTensor: inputTensor name:nil];
+    auto twoDivSquareRootPi = [mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                  secondaryTensor:piSquareRootTensor
+                                                             name:nil];
+    auto gradientDenominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi
+                                                         secondaryTensor:estimatedSquaredExp
+                                                                    name:nil];
+    auto changeErf = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:estimated name:nil]
+                                            secondaryTensor:inputTensor
+                                                       name:nil];
     auto gradient = [mpsGraph divisionWithPrimaryTensor:changeErf secondaryTensor:gradientDenominator name:nil];
     // pass 2
     auto newEstimated = [mpsGraph subtractionWithPrimaryTensor:estimated secondaryTensor:gradient name:nil];
     auto negEstimated2 = [mpsGraph multiplicationWithPrimaryTensor:newEstimated secondaryTensor:negOneTensor name:nil];
-    auto estimatedSquared2 = [mpsGraph multiplicationWithPrimaryTensor:negEstimated2 secondaryTensor:newEstimated name:nil];
+    auto estimatedSquared2 = [mpsGraph multiplicationWithPrimaryTensor:negEstimated2
+                                                       secondaryTensor:newEstimated
+                                                                  name:nil];
     auto estimatedSquaredExp2 = [mpsGraph exponentWithTensor:estimatedSquared2 name:nil];
-    auto twoDivSquareRootPi2 = [mpsGraph divisionWithPrimaryTensor:twoTensor secondaryTensor:piSquareRootTensor name:nil];
-    auto gradientDenominator2= [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi2
-                                                   secondaryTensor:estimatedSquaredExp2
+    auto twoDivSquareRootPi2 = [mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                   secondaryTensor:piSquareRootTensor
                                                               name:nil];
-    auto changeErf2 = [mpsGraph subtractionWithPrimaryTensor: [mpsGraph erfWithTensor:newEstimated name:nil]
-                              secondaryTensor: inputTensor name:nil];
+    auto gradientDenominator2 = [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi2
+                                                          secondaryTensor:estimatedSquaredExp2
+                                                                     name:nil];
+    auto changeErf2 = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:newEstimated name:nil]
+                                             secondaryTensor:inputTensor
+                                                        name:nil];
     auto gradient2 = [mpsGraph divisionWithPrimaryTensor:changeErf2 secondaryTensor:gradientDenominator2 name:nil];
-    auto newEstimated2 = [mpsGraph subtractionWithPrimaryTensor:newEstimated secondaryTensor:gradient2 name:nil]; 
-    return  newEstimated2;   
-    
+    auto newEstimated2 = [mpsGraph subtractionWithPrimaryTensor:newEstimated secondaryTensor:gradient2 name:nil];
+
+    // post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
+    // this is because the this algorithm might push us on the wrong side of the asymptote due to rounding
+    auto onePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:oneTensor name:nil];
+    auto negOnePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:negOneTensor name:nil];
+
+    auto resultWithInfinity = [mpsGraph selectWithPredicateTensor:onePredicate
+                                              truePredicateTensor:infinityTensor
+                                             falsePredicateTensor:newEstimated2
+                                                             name:nil];
+    return [mpsGraph selectWithPredicateTensor:negOnePredicate
+                           truePredicateTensor:negInfinityTensor
+                          falsePredicateTensor:resultWithInfinity
+                                          name:nil];
   });
 }
 
