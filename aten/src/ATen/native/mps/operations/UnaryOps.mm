@@ -252,7 +252,6 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 }
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
-  // TORCH_CHECK(isFloatingType(self.scalar_type()), "erfinv_out_mps is only implemented for floating types");
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:inputTensor.dataType];
     auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:inputTensor.dataType];
@@ -297,39 +296,30 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
                                     falsePredicateTensor:resultNegative
                                                     name:nil];
     // add 2 steps of Newton-Raphson iteration to improve accuracy
-    // adopted from   x = x - (std::erf(x) - y) /
-    // ((static_cast<T>(2.0)/static_cast<T>(std::sqrt(c10::pi<double>)))*std::exp(-x*x)); pass 1
-    auto negEstimated = [mpsGraph multiplicationWithPrimaryTensor:estimated secondaryTensor:negOneTensor name:nil];
-    auto estimatedSquared = [mpsGraph multiplicationWithPrimaryTensor:negEstimated secondaryTensor:estimated name:nil];
-    auto estimatedSquaredExp = [mpsGraph exponentWithTensor:estimatedSquared name:nil];
-    auto twoDivSquareRootPi = [mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                  secondaryTensor:piSquareRootTensor
-                                                             name:nil];
-    auto gradientDenominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi
-                                                         secondaryTensor:estimatedSquaredExp
-                                                                    name:nil];
-    auto changeErf = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:estimated name:nil]
-                                            secondaryTensor:inputTensor
-                                                       name:nil];
-    auto gradient = [mpsGraph divisionWithPrimaryTensor:changeErf secondaryTensor:gradientDenominator name:nil];
-    // pass 2
-    auto newEstimated = [mpsGraph subtractionWithPrimaryTensor:estimated secondaryTensor:gradient name:nil];
-    auto negEstimated2 = [mpsGraph multiplicationWithPrimaryTensor:newEstimated secondaryTensor:negOneTensor name:nil];
-    auto estimatedSquared2 = [mpsGraph multiplicationWithPrimaryTensor:negEstimated2
-                                                       secondaryTensor:newEstimated
-                                                                  name:nil];
-    auto estimatedSquaredExp2 = [mpsGraph exponentWithTensor:estimatedSquared2 name:nil];
-    auto twoDivSquareRootPi2 = [mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                   secondaryTensor:piSquareRootTensor
-                                                              name:nil];
-    auto gradientDenominator2 = [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi2
-                                                          secondaryTensor:estimatedSquaredExp2
-                                                                     name:nil];
-    auto changeErf2 = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:newEstimated name:nil]
-                                             secondaryTensor:inputTensor
-                                                        name:nil];
-    auto gradient2 = [mpsGraph divisionWithPrimaryTensor:changeErf2 secondaryTensor:gradientDenominator2 name:nil];
-    auto newEstimated2 = [mpsGraph subtractionWithPrimaryTensor:newEstimated secondaryTensor:gradient2 name:nil];
+    // adopted from
+    // https://github.com/pytorch/pytorch/blob/4154c8ea159fdaecc71ee9af820ac956193c875b/aten/src/ATen/native/Math.h#L191
+
+    auto currentEstimated = estimated;
+    for (int i = 0; i < 2; ++i) {
+      auto negEstimated = [mpsGraph multiplicationWithPrimaryTensor:currentEstimated
+                                                    secondaryTensor:negOneTensor
+                                                               name:nil];
+      auto estimatedSquared = [mpsGraph multiplicationWithPrimaryTensor:negEstimated
+                                                        secondaryTensor:currentEstimated
+                                                                   name:nil];
+      auto estimatedSquaredExp = [mpsGraph exponentWithTensor:estimatedSquared name:nil];
+      auto twoDivSquareRootPi = [mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                    secondaryTensor:piSquareRootTensor
+                                                               name:nil];
+      auto gradientDenominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivSquareRootPi
+                                                           secondaryTensor:estimatedSquaredExp
+                                                                      name:nil];
+      auto changeErf = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated name:nil]
+                                              secondaryTensor:inputTensor
+                                                         name:nil];
+      auto gradient = [mpsGraph divisionWithPrimaryTensor:changeErf secondaryTensor:gradientDenominator name:nil];
+      currentEstimated = [mpsGraph subtractionWithPrimaryTensor:currentEstimated secondaryTensor:gradient name:nil];
+    }
 
     // post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
     // this is because the this algorithm might push us on the wrong side of the asymptote due to rounding
@@ -338,7 +328,7 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
 
     auto resultWithInfinity = [mpsGraph selectWithPredicateTensor:onePredicate
                                               truePredicateTensor:infinityTensor
-                                             falsePredicateTensor:newEstimated2
+                                             falsePredicateTensor:currentEstimated
                                                              name:nil];
     return [mpsGraph selectWithPredicateTensor:negOnePredicate
                            truePredicateTensor:negInfinityTensor
