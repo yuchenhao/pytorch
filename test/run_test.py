@@ -471,12 +471,14 @@ def run_test(
     stepcurrent_key = test_file
     if isinstance(test_file, ShardedTest):
         # C++ tests work with pytest sharding
-        unittest_args.extend(
-            [
-                f"--shard-id={test_module.shard - 1}",
-                f"--num-shards={test_module.num_shards}",
-            ]
-        )
+        if IS_CI:
+            unittest_args.extend(
+                [
+                    f"--shard-id={test_module.shard - 1}",
+                    f"--num-shards={test_module.num_shards}",
+                ]
+            )
+
         test_file = test_module.name
         stepcurrent_key = f"{test_file}_{test_module.shard - 1}"
 
@@ -898,19 +900,21 @@ def print_log_file(test: str, file_path: str, failed: bool) -> None:
 
 
 def get_pytest_args(options, stepcurrent_key, is_cpp_test=False):
-    if RERUN_DISABLED_TESTS:
-        # When under rerun-disabled-tests mode, run the same tests multiple times to determine their
-        # flakiness status. Default to 50 re-runs
-        rerun_options = ["--flake-finder", "--flake-runs=50"]
-    elif options.continue_through_error:
-        # If continue through error, don't stop on first failure
-        rerun_options = ["--reruns=2"]
-    else:
-        # When under the normal mode, retry a failed test 2 more times. -x means stop at the first
-        # failure
-        rerun_options = ["-x", "--reruns=2"]
-        if IS_CI:
+    if IS_CI:
+        if RERUN_DISABLED_TESTS:
+            # When under rerun-disabled-tests mode, run the same tests multiple times to determine their
+            # flakiness status. Default to 50 re-runs
+            rerun_options = ["--flake-finder", "--flake-runs=50"]
+        elif options.continue_through_error:
+            # If continue through error, don't stop on first failure
+            rerun_options = ["--reruns=2"]
+        else:
+            # When under the normal mode, retry a failed test 2 more times. -x means stop at the first
+            # failure
+            rerun_options = ["-x", "--reruns=2"]
             rerun_options.append(f"--sc={stepcurrent_key}")
+    else:
+        rerun_options = []
 
     pytest_args = [
         "-vv",
