@@ -253,99 +253,105 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
+    using namespace mps;
     auto dataType = inputTensor.dataType;
+    // auto resultWithInfinity = [mpsGraph constantWithScalar:0.0 dataType:inputTensor.dataType];
+    // auto negInfinityTensor = [mpsGraph constantWithScalar:-1.0 * INFINITY dataType:dataType];
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
-    auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:dataType];
-    auto halfTensor = [mpsGraph constantWithScalar:0.5 dataType:dataType];
-    auto oneTensor = [mpsGraph constantWithScalar:1.0 dataType:dataType];
-    auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
-    auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:dataType];
-    auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:dataType];
-    auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:dataType];
-    auto infinityTensor = [mpsGraph constantWithScalar:INFINITY dataType:dataType];
-    auto negInfinityTensor = [mpsGraph constantWithScalar:-INFINITY dataType:dataType];
-
-    auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
-    auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:A name:nil]
-                                      name:nil];
-    auto C = [mpsGraph
-        additionWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                      secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:piTensor
-                                                                                                secondaryTensor:aTensor
-                                                                                                           name:nil]
-                                                                 name:nil]
-                  secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:B secondaryTensor:halfTensor name:nil]
-                             name:nil];
-    auto finalDiff = [mpsGraph
-        subtractionWithPrimaryTensor:
-            [mpsGraph
-                squareRootWithTensor:[mpsGraph
-                                         subtractionWithPrimaryTensor:[mpsGraph multiplicationWithPrimaryTensor:C
-                                                                                                secondaryTensor:C
-                                                                                                           name:nil]
-                                                      secondaryTensor:[mpsGraph divisionWithPrimaryTensor:B
-                                                                                          secondaryTensor:aTensor
-                                                                                                     name:nil]
-                                                                 name:nil]
-                                name:nil]
-                     secondaryTensor:C
-                                name:nil];
-    auto estimated = [mpsGraph
-        selectWithPredicateTensor:[mpsGraph greaterThanOrEqualToWithPrimaryTensor:inputTensor
-                                                                  secondaryTensor:zeroTensor
-                                                                             name:nil]
-              truePredicateTensor:[mpsGraph squareRootWithTensor:finalDiff name:nil]
-             falsePredicateTensor:[mpsGraph multiplicationWithPrimaryTensor:[mpsGraph squareRootWithTensor:finalDiff
-                                                                                                      name:nil]
-                                                            secondaryTensor:negOneTensor
-                                                                       name:nil]
-                             name:nil];
-
-    auto currentEstimated = estimated;
-    for (int i = 0; i < 2; ++i) {
-      auto estimatedSquaredExp = [mpsGraph
-          exponentWithTensor:[mpsGraph
-                                 multiplicationWithPrimaryTensor:[mpsGraph
-                                                                     multiplicationWithPrimaryTensor:currentEstimated
-                                                                                     secondaryTensor:negOneTensor
-                                                                                                name:nil]
-                                                 secondaryTensor:currentEstimated
-                                                            name:nil]
-                        name:nil];
-      auto gradient = [mpsGraph
-          divisionWithPrimaryTensor:[mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated
-                                                                                              name:nil]
-                                                           secondaryTensor:inputTensor
-                                                                      name:nil]
-                    secondaryTensor:[mpsGraph
-                                        multiplicationWithPrimaryTensor:[mpsGraph
-                                                                            divisionWithPrimaryTensor:twoTensor
-                                                                                      secondaryTensor:piSquareRootTensor
-                                                                                                 name:nil]
-                                                        secondaryTensor:estimatedSquaredExp
-                                                                   name:nil]
+    // @autoreleasepool {
+      auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:dataType];
+      auto halfTensor = [mpsGraph constantWithScalar:0.5 dataType:dataType];
+      auto oneTensor = [mpsGraph constantWithScalar:1.0 dataType:dataType];
+      auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
+      auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:dataType];
+      auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:dataType];
+      auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:dataType];
+      // auto infinityTensor = [mpsGraph constantWithScalar:INFINITY dataType:dataType];
+      
+      auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
+      auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor
+                                                                    secondaryTensor:A
+                                                                               name:nil]
+                                        name:nil];
+      auto C = [mpsGraph
+          additionWithPrimaryTensor:[mpsGraph
+                                        divisionWithPrimaryTensor:twoTensor
+                                                  secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:piTensor
+                                                                                            secondaryTensor:aTensor
+                                                                                                       name:nil]
+                                                             name:nil]
+                    secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:B secondaryTensor:halfTensor name:nil]
                                name:nil];
+      auto CSquared = [mpsGraph multiplicationWithPrimaryTensor:C secondaryTensor:C name:nil];
+      auto CSquaredMinusBDivA = [mpsGraph subtractionWithPrimaryTensor:CSquared
+                                                       secondaryTensor:[mpsGraph divisionWithPrimaryTensor:B
+                                                                                           secondaryTensor:aTensor
+                                                                                                      name:nil]
+                                                                  name:nil];
+      auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:CSquaredMinusBDivA name:nil];
+      auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:C name:nil];
+      auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
+      auto predicateTensor = [mpsGraph greaterThanOrEqualToWithPrimaryTensor:inputTensor
+                                                             secondaryTensor:zeroTensor
+                                                                        name:nil];
+      auto resultPositive = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot
+                                                      secondaryTensor:oneTensor
+                                                                 name:nil];
+      auto resultNegative = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot
+                                                      secondaryTensor:negOneTensor
+                                                                 name:nil];
+      auto estimated = [mpsGraph selectWithPredicateTensor:predicateTensor
+                                       truePredicateTensor:resultPositive
+                                      falsePredicateTensor:resultNegative
+                                                      name:nil];
 
-      currentEstimated = [mpsGraph subtractionWithPrimaryTensor:currentEstimated secondaryTensor:gradient name:nil];
-    }
-
-    // post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
-    // this is because the algorithm might push us on the wrong side of the asymptote due to rounding
-
-    // auto onePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:oneTensor name:nil];
-    // auto negOnePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:negOneTensor name:nil];
-    auto resultWithInfinity = [mpsGraph selectWithPredicateTensor:[mpsGraph equalWithPrimaryTensor:inputTensor
-                                                                                   secondaryTensor:oneTensor
-                                                                                              name:nil]
-                                              truePredicateTensor:infinityTensor
-                                             falsePredicateTensor:currentEstimated
-                                                             name:nil];
-    return [mpsGraph selectWithPredicateTensor:[mpsGraph equalWithPrimaryTensor:inputTensor
-                                                                secondaryTensor:negOneTensor
+      auto currentEstimated = estimated;
+      for (int i = 0; i < 2; ++i) {
+        auto estimatedSquaredExp = [mpsGraph
+            exponentWithTensor:[mpsGraph
+                                   multiplicationWithPrimaryTensor:[mpsGraph
+                                                                       multiplicationWithPrimaryTensor:currentEstimated
+                                                                                       secondaryTensor:negOneTensor
+                                                                                                  name:nil]
+                                                   secondaryTensor:currentEstimated
+                                                              name:nil]
+                          name:nil];
+        auto gradient = [mpsGraph
+            divisionWithPrimaryTensor:[mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated
+                                                                                                name:nil]
+                                                             secondaryTensor:inputTensor
+                                                                        name:nil]
+                      secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:
+                                                    [mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                                        secondaryTensor:piSquareRootTensor
+                                                                                   name:nil]
+                                                                secondaryTensor:estimatedSquaredExp
                                                                            name:nil]
-                           truePredicateTensor:negInfinityTensor
-                          falsePredicateTensor:resultWithInfinity
-                                          name:nil];
+                                 name:nil];
+
+        currentEstimated = [mpsGraph subtractionWithPrimaryTensor:currentEstimated secondaryTensor:gradient name:nil];
+
+
+      }
+      return  currentEstimated;
+      // post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
+      // this is because the algorithm might push us on the wrong side of the asymptote due to rounding
+
+      // auto onePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:oneTensor name:nil];
+      // auto negOnePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:negOneTensor name:nil];
+      // resultWithInfinity = [mpsGraph selectWithPredicateTensor:[mpsGraph equalWithPrimaryTensor:inputTensor
+      //                                                                           secondaryTensor:oneTensor
+      //                                                                                      name:nil]
+      //                                      truePredicateTensor:infinityTensor
+      //                                     falsePredicateTensor:currentEstimated
+      //                                                     name:nil];
+    // }
+    // return [mpsGraph selectWithPredicateTensor:[mpsGraph equalWithPrimaryTensor:inputTensor
+    //                                                             secondaryTensor:negOneTensor
+    //                                                                        name:nil]
+    //                        truePredicateTensor:negInfinityTensor
+    //                       falsePredicateTensor:resultWithInfinity
+    //                                       name:nil];
   });
 }
 
