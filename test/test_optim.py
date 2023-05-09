@@ -749,11 +749,9 @@ class TestOptim(TestCase):
                 params_with_flags[flag] = flag_value
 
                 # foreach/fused optimizers should be tested with a param_groups['params'] with
-                # zeor_size tensor as its last param.
+                # zero_size tensor as its last param.
                 # ref: https://github.com/pytorch/pytorch/issues/100701
-                # TODO(crcrpar): Investigate ROCm failure in
-                # https://github.com/pytorch/pytorch/actions/runs/4910476500/jobs/8767913127
-                empty_params = [torch.empty((), device=device, dtype=torch.float64)] if flag_value else []
+                empty_params = [torch.empty((), device=device, dtype=torch.float64)]
 
                 optimizer = optimizer_constructor(
                     list(model.parameters()) + empty_params, **params_with_flags
