@@ -253,6 +253,12 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
+    // The implementation is based on the following equation:
+    // erfinv(x) ~= sgn(x)*sqrt(sqrt(C^2-B/a) - C)
+    // where B = log(1-x^2), C= (2/(pi*a) + B/2)
+    // a = 0.147 or a=0.140012 depending on which region of x we want to optmize for.
+    // equation is from: https://www.educare.bz/unit/error-in-functions/
+
     auto dataType = inputTensor.dataType;
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
     auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:dataType];
