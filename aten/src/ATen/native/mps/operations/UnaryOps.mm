@@ -265,10 +265,12 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto halfTensor = [mpsGraph constantWithScalar:0.5 dataType:dataType];
     auto oneTensor = [mpsGraph constantWithScalar:1.0 dataType:dataType];
     auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
-    auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:dataType];
+    auto piTensor = [mpsGraph constantWithScalar:3.1415926535897932384626433832795028841971693993751058209749445923078
+                                        dataType:dataType];
     auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:dataType];
-    auto twoDivPiSquareRootTensor = [mpsGraph constantWithScalar:1.12837916709551257389615890312154517
-                                                        dataType:dataType];
+    auto twoDivPiSquareRootTensor =
+        [mpsGraph constantWithScalar:1.1283791670955125738961589031215451716881012586579977136881714434
+                            dataType:dataType];
     auto epsilonTensor = [mpsGraph constantWithScalar:1e-30 dataType:dataType];
 
     auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
@@ -299,6 +301,11 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto outputTensor = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor:finalMask name:nil];
 
     // Apply 2 passes of Newton
+    // y = y - f(y) / f'(y)
+    // y = y - (erf(y) - x) / ((2/sqrt(pi)) * exp(-y^2))
+    // where y is our current estimate(outputTensor) and x is the inputTensor
+    // and the term f(y) / f'(y) is labeled as stepSize in the code below to adjust our estimate
+
     // pass 1
     auto denominator = [mpsGraph
         exponentWithTensor:[mpsGraph
@@ -316,8 +323,8 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:outputTensor name:nil]
                                             secondaryTensor:inputTensor
                                                        name:nil];
-    auto gradient = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
-    outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:gradient name:nil];
+    auto stepSize = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
+    outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:stepSize name:nil];
 
     // pass 2 running this causes significant memory spike on tensor sizes :
     //                        x = torch.arange(-1, 1, 1e-8)
@@ -337,9 +344,8 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     // numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:outputTensor name:nil]
     //                                         secondaryTensor:inputTensor
     //                                                    name:nil];
-    // gradient = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
-    // outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:gradient name:nil];
-
+    // stepSize = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
+    // outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:stepSize name:nil];
     return outputTensor;
   });
 }
