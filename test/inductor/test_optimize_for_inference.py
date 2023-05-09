@@ -87,6 +87,39 @@ class OptimizeForInferenceTemplate(TestCase):
             )
         )
 
+    def test_unfolded_bn(self):
+        x = torch.rand([3, 32, 15, 15]).to(self.device)
+
+        mod = torch.nn.BatchNorm2d(32, eps=0.001).eval().to(self.device)
+
+        @torch.compile()
+        def foo(mod, x):
+            return mod(x) + 10
+
+        with torch.no_grad():
+            out_eager = mod(x)
+            out_compiled, code = run_and_get_code(foo, mod, x)
+
+            self.assertEqual(out_eager, out_compiled)
+            breakpoint()
+
+    def test_folded_conv_bn(self):
+        mod = ConvBN(3, 32, kernel_size=3, stride=2).cuda().eval().to(self.device)
+        x = torch.rand(3, 3, 32, 32).to(self.device)
+
+        @torch.compile()
+        def foo(mod, x):
+            return mod(x)
+
+        with torch.no_grad():
+            out_optimized_for_infernece = foo(mod, x)
+
+        with unittest.patch(config, "optimize_for_inference", False):
+            out_compiled = foo(mod, x)
+
+        # TODO - torch.compile gives different answers than eager
+        self.assertEqual(out_optimized_for_infernece, out_compiled)
+
     def test_mutation(self):
         class Mod(torch.nn.Module):
             def __init__(self):
