@@ -265,8 +265,6 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
                                                         dataType:dataType];
     auto epsilonTensor = [mpsGraph constantWithScalar:1e-30 dataType:dataType];
 
-    MPSGraphTensor* outputTensor = mps::mpsGraphRankedPlaceHolder(mpsGraph, output);
-
     auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
     auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:A name:nil]
                                       name:nil];
@@ -289,15 +287,13 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
     auto isNegative = [mpsGraph lessThanWithPrimaryTensor:inputTensor secondaryTensor:zeroTensor name:nil];
     auto isPositive = [mpsGraph greaterThanWithPrimaryTensor:inputTensor secondaryTensor:zeroTensor name:nil];
-
     auto negTensorMask = [mpsGraph multiplicationWithPrimaryTensor:isNegative secondaryTensor:negOneTensor name:nil];
     auto finalMask = [mpsGraph additionWithPrimaryTensor:negTensorMask secondaryTensor:isPositive name:nil];
     // We want to multiply finalSquareRoot by -1 if input is negative else by 1
-    outputTensor = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor:finalMask name:nil];
+    auto outputTensor = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor:finalMask name:nil];
 
     // Apply 2 passes of Newton
     // pass 1
-
     auto denominator = [mpsGraph
         exponentWithTensor:[mpsGraph
                                multiplicationWithPrimaryTensor:[mpsGraph multiplicationWithPrimaryTensor:outputTensor
@@ -317,10 +313,9 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto gradient = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
     outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:gradient name:nil];
 
-    // 2nd pass - running this 2nd pass significantly increases memory usage why?
-    //            it will fail on torch.arange(-1, 1, 1e-8) 
-
-    // auto denominator = [mpsGraph
+    // pass 2 running this causes significant memory spike on tensor sizes :
+    //                        x = torch.arange(-1, 1, 1e-8)
+    // denominator = [mpsGraph
     //     exponentWithTensor:[mpsGraph
     //                            multiplicationWithPrimaryTensor:[mpsGraph multiplicationWithPrimaryTensor:outputTensor
     //                                                                                      secondaryTensor:negOneTensor
@@ -333,10 +328,10 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     //                                                    name:nil];
     // // add episilon to retain inf as otherwise we get nan when divide by 0
     // denominator = [mpsGraph additionWithPrimaryTensor:denominator secondaryTensor:epsilonTensor name:nil];
-    // auto numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:outputTensor name:nil]
+    // numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:outputTensor name:nil]
     //                                         secondaryTensor:inputTensor
     //                                                    name:nil];
-    // auto gradient = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
+    // gradient = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
     // outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:gradient name:nil];
 
     return outputTensor;
