@@ -4,6 +4,7 @@
 #include <ATen/mps/MPSDevice.h>
 #include <ATen/mps/MPSGeneratorImpl.h>
 #include <ATen/mps/MPSHooks.h>
+#include <ATen/mps/MPSStream.h>
 #include <c10/util/Logging.h>
 
 namespace at {
