@@ -1096,13 +1096,14 @@ class TritonKernel(Kernel):
         original_index = index
         index, mask_vars, mask, expand_str = self.indexing(index)
 
-        if "rmask" in mask and not self.persistent_reduction:
-            # This eviction policy heuristic is untested.
-            # ptillet suggested we should try only doing this for
-            # the first N-1 loops and not for the final loop.
-            ep = ", eviction_policy='evict_last'"
-        else:
-            ep = ""
+        # Keep the variable in cache if we are going to reuse it
+        # TODO(lezcano) We could potentially do better
+        # https://github.com/pytorch/pytorch/pull/91316#issuecomment-1364680622
+        names = self.mutations or {name}
+        last_use = len(names & self.current_node.last_usage) > 0
+        broadcasting = "rmask" in mask and "xmask" not in mask and not self.persistent_reduction
+        evict_last = not last_use or broadcasting
+        ep = ", eviction_policy='evict_last'" if evict_last else ""
 
         # "other" below is a workaround for https://github.com/openai/triton/issues/737
         # for bool, even though it's likely subject to the same bug, setting `other` leads
@@ -1172,6 +1173,10 @@ class TritonKernel(Kernel):
         ):
             self.gen_assert_indirect_indexing(self.stores, original_index, mask)
 
+
+        # Lezcano: Setting the eviction_policy would be useful in in_out_ptrs,
+        # but it's not supported by triton master ATM
+        # See how we set it in loads in the future if they support it again.
         if mode is None:
             line = f"tl.store({var} + ({index}), {value}, {mask})"
         elif mode == "atomic_add":
