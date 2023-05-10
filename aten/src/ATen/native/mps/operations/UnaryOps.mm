@@ -252,101 +252,88 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 }
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
-  mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
-    // The implementation is based on the following equation:
-    // erfinv(x) ~= sgn(x)*sqrt(sqrt(C^2-B/a) - C)
-    // where B = log(1-x^2), C= (2/(pi*a) + B/2)
-    // a = 0.147 or a=0.140012 depending on which region of x we want to optmize for.
-    // equation is from: https://www.educare.bz/unit/error-in-functions/
-
-    auto dataType = inputTensor.dataType;
-    auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
-    auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:dataType];
-    auto halfTensor = [mpsGraph constantWithScalar:0.5 dataType:dataType];
+  mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* y) {
+    // The implementation copied from erfinv in ATen/native/Math.cpp
+    // https://github.com/pytorch/pytorch/blob/4154c8ea159fdaecc71ee9af820ac956193c875b/aten/src/ATen/native/Math.h#L151
+    auto dataType = y.dataType;
     auto oneTensor = [mpsGraph constantWithScalar:1.0 dataType:dataType];
     auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
-    auto piTensor = [mpsGraph constantWithScalar:3.1415926535897932384626433832795028841971693993751058209749445923078
-                                        dataType:dataType];
-    auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:dataType];
-    auto twoDivPiSquareRootTensor =
-        [mpsGraph constantWithScalar:1.1283791670955125738961589031215451716881012586579977136881714434
-                            dataType:dataType];
-    auto epsilonTensor = [mpsGraph constantWithScalar:1e-30 dataType:dataType];
 
-    auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
-    auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:A name:nil]
-                                      name:nil];
-    auto C = [mpsGraph
-        additionWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                      secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:piTensor
-                                                                                                secondaryTensor:aTensor
-                                                                                                           name:nil]
-                                                                 name:nil]
-                  secondaryTensor:[mpsGraph multiplicationWithPrimaryTensor:B secondaryTensor:halfTensor name:nil]
-                             name:nil];
-    auto CSquared = [mpsGraph multiplicationWithPrimaryTensor:C secondaryTensor:C name:nil];
-    auto CSquaredMinusBDivA = [mpsGraph subtractionWithPrimaryTensor:CSquared
-                                                     secondaryTensor:[mpsGraph divisionWithPrimaryTensor:B
-                                                                                         secondaryTensor:aTensor
-                                                                                                    name:nil]
-                                                                name:nil];
-    auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:CSquaredMinusBDivA name:nil];
-    auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:C name:nil];
-    auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
-    auto isNegative = [mpsGraph lessThanWithPrimaryTensor:inputTensor secondaryTensor:zeroTensor name:nil];
-    auto isPositive = [mpsGraph greaterThanWithPrimaryTensor:inputTensor secondaryTensor:zeroTensor name:nil];
-    auto negTensorMask = [mpsGraph multiplicationWithPrimaryTensor:isNegative secondaryTensor:negOneTensor name:nil];
-    auto finalMask = [mpsGraph additionWithPrimaryTensor:negTensorMask secondaryTensor:isPositive name:nil];
-    // We want to multiply finalSquareRoot by -1 if input is negative else by 1
-    auto outputTensor = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor:finalMask name:nil];
+    // Aprpoximation #1 for |y| <= .7
+    auto A0 = [mpsGraph constantWithScalar:0.886226899 dataType:dataType];
+    auto A1 = [mpsGraph constantWithScalar:-1.645349621 dataType:dataType];
+    auto A2 = [mpsGraph constantWithScalar:0.914624893 dataType:dataType];
+    auto A3 = [mpsGraph constantWithScalar:-0.140543331 dataType:dataType];
+    auto B0 = [mpsGraph constantWithScalar:-2.118377725 dataType:dataType];
+    auto B1 = [mpsGraph constantWithScalar:1.442710462 dataType:dataType];
+    auto B2 = [mpsGraph constantWithScalar:-0.329097515 dataType:dataType];
+    auto B3 = [mpsGraph constantWithScalar:0.012229801 dataType:dataType];
+    auto z = [mpsGraph multiplicationWithPrimaryTensor:y secondaryTensor:y name:nil];
+    auto num = [mpsGraph multiplicationWithPrimaryTensor:z secondaryTensor:A3 name:nil];
+    num = [mpsGraph additionWithPrimaryTensor:num secondaryTensor:A2 name:nil];
+    num = [mpsGraph multiplicationWithPrimaryTensor:num secondaryTensor:z name:nil];
+    num = [mpsGraph additionWithPrimaryTensor:num secondaryTensor:A1 name:nil];
+    num = [mpsGraph multiplicationWithPrimaryTensor:num secondaryTensor:z name:nil];
+    num = [mpsGraph additionWithPrimaryTensor:num secondaryTensor:A0 name:nil];
+    auto dem = [mpsGraph multiplicationWithPrimaryTensor:z secondaryTensor:B3 name:nil];
+    dem = [mpsGraph additionWithPrimaryTensor:dem secondaryTensor:B2 name:nil];
+    dem = [mpsGraph multiplicationWithPrimaryTensor:dem secondaryTensor:z name:nil];
+    dem = [mpsGraph additionWithPrimaryTensor:dem secondaryTensor:B1 name:nil];
+    dem = [mpsGraph multiplicationWithPrimaryTensor:dem secondaryTensor:z name:nil];
+    dem = [mpsGraph additionWithPrimaryTensor:dem secondaryTensor:B0 name:nil];
+    dem = [mpsGraph multiplicationWithPrimaryTensor:dem secondaryTensor:z name:nil];
+    dem = [mpsGraph additionWithPrimaryTensor:dem secondaryTensor:oneTensor name:nil];
+    auto x_1 = [mpsGraph multiplicationWithPrimaryTensor:y
+                                         secondaryTensor:[mpsGraph divisionWithPrimaryTensor:num
+                                                                             secondaryTensor:dem
+                                                                                        name:nil]
+                                                    name:nil];
+    // calculate 2nd approximation for |y| > 0.7
+    auto C0 = [mpsGraph constantWithScalar:-1.970840454 dataType:dataType];
+    auto C1 = [mpsGraph constantWithScalar:-1.624906493 dataType:dataType];
+    auto C2 = [mpsGraph constantWithScalar:3.429567803 dataType:dataType];
+    auto C3 = [mpsGraph constantWithScalar:1.641345311 dataType:dataType];
+    auto D0 = [mpsGraph constantWithScalar:3.543889200 dataType:dataType];
+    auto D1 = [mpsGraph constantWithScalar:1.637067800 dataType:dataType];
+    auto y_abs = [mpsGraph absoluteWithTensor:y name:nil];
+    z = [mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:y_abs name:nil];
+    z = [mpsGraph divisionWithPrimaryTensor:z secondaryTensor:twoTensor name:nil];
+    z = [mpsGraph logarithmWithTensor:z name:nil];
+    z = [mpsGraph negativeWithTensor:z name:nil];
+    z = [mpsGraph squareRootWithTensor:z name:nil];
+    num = [mpsGraph multiplicationWithPrimaryTensor:z secondaryTensor:C3 name:nil];
+    num = [mpsGraph additionWithPrimaryTensor:num secondaryTensor:C2 name:nil];
+    num = [mpsGraph multiplicationWithPrimaryTensor:num secondaryTensor:z name:nil];
+    num = [mpsGraph additionWithPrimaryTensor:num secondaryTensor:C1 name:nil];
+    num = [mpsGraph multiplicationWithPrimaryTensor:num secondaryTensor:z name:nil];
+    num = [mpsGraph additionWithPrimaryTensor:num secondaryTensor:C0 name:nil];
+    dem = [mpsGraph multiplicationWithPrimaryTensor:z secondaryTensor:D1 name:nil];
+    dem = [mpsGraph additionWithPrimaryTensor:dem secondaryTensor:D0 name:nil];
+    dem = [mpsGraph multiplicationWithPrimaryTensor:dem secondaryTensor:z name:nil];
+    dem = [mpsGraph additionWithPrimaryTensor:dem secondaryTensor:oneTensor name:nil];
+    auto x_2 = [mpsGraph divisionWithPrimaryTensor:num secondaryTensor:dem name:nil];
+    auto lessthanPointSeven = [mpsGraph lessThanOrEqualToWithPrimaryTensor:y_abs
+                                                           secondaryTensor:[mpsGraph constantWithScalar:0.7
+                                                                                               dataType:dataType]
+                                                                      name:nil];
+    auto x = [mpsGraph selectWithPredicateTensor:lessthanPointSeven
+                             truePredicateTensor:x_1
+                            falsePredicateTensor:x_2
+                                            name:nil];
 
-    // Apply 2 passes of Newton
-    // y = y - f(y) / f'(y)
-    // y = y - (erf(y) - x) / ((2/sqrt(pi)) * exp(-y^2))
-    // where y is our current estimate(outputTensor) and x is the inputTensor
-    // and the term f(y) / f'(y) is labeled as stepSize in the code below to adjust our estimate
-
-    // pass 1
-    auto denominator = [mpsGraph
-        exponentWithTensor:[mpsGraph
-                               multiplicationWithPrimaryTensor:[mpsGraph multiplicationWithPrimaryTensor:outputTensor
-                                                                                         secondaryTensor:negOneTensor
-                                                                                                    name:nil]
-                                               secondaryTensor:outputTensor
-                                                          name:nil]
-                      name:nil];
-    denominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivPiSquareRootTensor
-                                            secondaryTensor:denominator
-                                                       name:nil];
-    // add episilon to retain inf as otherwise we get nan when divide by 0
-    denominator = [mpsGraph additionWithPrimaryTensor:denominator secondaryTensor:epsilonTensor name:nil];
-    auto numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:outputTensor name:nil]
-                                            secondaryTensor:inputTensor
-                                                       name:nil];
-    auto stepSize = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
-    outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:stepSize name:nil];
-
-    // pass 2 running this causes significant memory spike on tensor sizes :
-    //                        x = torch.arange(-1, 1, 1e-8)
-    // denominator = [mpsGraph
-    //     exponentWithTensor:[mpsGraph
-    //                            multiplicationWithPrimaryTensor:[mpsGraph multiplicationWithPrimaryTensor:outputTensor
-    //                                                                                      secondaryTensor:negOneTensor
-    //                                                                                                 name:nil]
-    //                                            secondaryTensor:outputTensor
-    //                                                       name:nil]
-    //                   name:nil];
-    // denominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivPiSquareRootTensor
-    //                                         secondaryTensor:denominator
-    //                                                    name:nil];
-    // // add episilon to retain inf as otherwise we get nan when divide by 0
-    // denominator = [mpsGraph additionWithPrimaryTensor:denominator secondaryTensor:epsilonTensor name:nil];
-    // numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:outputTensor name:nil]
-    //                                         secondaryTensor:inputTensor
-    //                                                    name:nil];
-    // stepSize = [mpsGraph divisionWithPrimaryTensor:numerator secondaryTensor:denominator name:nil];
-    // outputTensor = [mpsGraph subtractionWithPrimaryTensor:outputTensor secondaryTensor:stepSize name:nil];
-    return outputTensor;
+    // fix infinity if input was 1
+    auto isOne = [mpsGraph equalWithPrimaryTensor:y_abs
+                                  secondaryTensor:[mpsGraph constantWithScalar:1.0 dataType:dataType]
+                                             name:nil];
+    x = [mpsGraph selectWithPredicateTensor:isOne
+                        truePredicateTensor:[mpsGraph constantWithScalar:INFINITY dataType:dataType]
+                       falsePredicateTensor:x
+                                       name:nil];
+    // Fix sign
+    x = [mpsGraph absoluteWithTensor:x name:nil];
+    auto y_sign = [mpsGraph signWithTensor:y name:nil];
+    x = [mpsGraph multiplicationWithPrimaryTensor:x secondaryTensor:y_sign name:nil];
+    return x;
   });
 }
 
