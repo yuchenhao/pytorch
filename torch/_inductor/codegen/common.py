@@ -20,7 +20,6 @@ from ..utils import (
     IndentedBuffer,
     sympy_dot,
     sympy_subs,
-    sympy_symbol,
     unique,
 )
 from ..virtualized import ops, V
@@ -743,7 +742,8 @@ class Kernel(CodeGen):
 
             @staticmethod
             def indirect_indexing(index_var, size):
-                return sympy_symbol(str(index_var))
+                # Skip CSE since this doesn't return an expression
+                return self.indirect_indexing(index_var, size)
 
             @staticmethod
             def load(name: str, index: sympy.Expr):
