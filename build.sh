@@ -1,1 +1,0 @@
-MACOSX_DEPLOYMENT_TARGET=13.0 CC=clang CXX=clang++ USE_MPS=1 USE_PYTORCH_METAL=1 DEBUG=1 python setup.py develop
