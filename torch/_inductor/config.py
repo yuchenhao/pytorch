@@ -223,6 +223,9 @@ class cpp:
     # force usage as specified, without testing.
     vec_isa_ok = None
 
+    # how many nodes to allow into a single horizontal fusion
+    max_horizontal_fusion_size = 16
+
 
 # config specific to codegen/triton.py
 class triton:
