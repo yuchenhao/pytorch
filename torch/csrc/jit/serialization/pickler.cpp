@@ -801,9 +801,8 @@ bool checkHasValidSetGetState(const std::shared_ptr<c10::ClassType>& cls) {
   return true;
 }
 
-
 // A allowlist of device type, currently available is PrivateUse1
-static std::unordered_set<c10::DeviceType> DeviceTypeWhitelist{
+static std::unordered_set<c10::DeviceType> DeviceTypeAllowlist{
     c10::DeviceType::PrivateUse1};
 
 // The array to save function pointer for BackendMeta serialization.
@@ -818,8 +817,9 @@ static std::array<
 // that require the corresponding backend.
 std::array<
     c10::optional<std::pair<BackendMetaPtr, BackendMetaPtr>>,
-    at::COMPILE_TIME_MAX_DEVICE_TYPES> GetBackendMetaSerialization() {
-    return BackendMetaSerialization;
+    at::COMPILE_TIME_MAX_DEVICE_TYPES> 
+GetBackendMetaSerialization() {
+  return BackendMetaSerialization;
 }
 
 // Register function pointer of Tensor BackendMetadata for serialization.
@@ -827,15 +827,15 @@ void TensorBackendMetaRegistry(
     c10::DeviceType t,
     BackendMetaPtr get_fptr,
     BackendMetaPtr set_fptr) {
-  // Whitelist verification
-  // Only if the devicetype is in the whitelist,
+  // allowlist verification
+  // Only if the devicetype is in the allowlist,
   // we allow the serialization extension to be registered for backendmeta data.
   TORCH_CHECK(
-      DeviceTypeWhitelist.find(t) != DeviceTypeWhitelist.end(),
+      DeviceTypeAllowlist.find(t) != DeviceTypeAllowlist.end(),
       "It is not allowed to register the serialization method ",
       "of backendMeta data for PrivateUse1. ",
       "If you have related serialization requirements, ",
-      "please expand the whitelist");
+      "please expand the allowlist");
   // Register function pointer
   int device_type = static_cast<int>(t);
   TORCH_CHECK(

@@ -311,11 +311,13 @@ TORCH_API void TensorBackendMetaRegistry(
 // that require the corresponding backend.
 TORCH_API std::array<
     c10::optional<std::pair<BackendMetaPtr, BackendMetaPtr>>,
-    at::COMPILE_TIME_MAX_DEVICE_TYPES> GetBackendMetaSerialization();
+    at::COMPILE_TIME_MAX_DEVICE_TYPES>
+GetBackendMetaSerialization();
 
 // Return a map of Tensor Metadata which including BackendMetaData for
 // serialization. For now, it only takes care of `conj` and `neg` bit.
-inline std::unordered_map<std::string, bool> getTensorMetadata(const at::Tensor& t) {
+inline std::unordered_map<std::string, bool> getTensorMetadata(
+    const at::Tensor& t) {
   // We don't support serializing `ZeroTensor` as it is not public
   // facing yet.
   TORCH_CHECK(
