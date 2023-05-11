@@ -134,6 +134,8 @@ def fuse_reindexing(reindex1, reindex2):
 
     return reindex
 
+NHWC_STRIDE_ORDER = [3, 0, 2, 1]
+NHWC_FILL_ORDER = [1, 3, 2, 0]
 
 def stride_order2fill_order(order):
     """
@@ -2213,6 +2215,8 @@ class ComputedBuffer(Buffer):
     def decide_layout(self):
         if isinstance(self.layout, FlexibleLayout):
             order = self.get_fill_order()
+            # if order is not None and len(order) == 4:
+            #     order = NHWC_FILL_ORDER
             if order:
                 self.freeze_layout_with_fill_order(order)
             else:
@@ -2764,6 +2768,10 @@ class ExternKernel(InputsKernel):
         return x
 
     @classmethod
+    def require_channels_last(cls, x):
+        return cls.require_stride_order(x, NHWC_STRIDE_ORDER)
+
+    @classmethod
     def require_contiguous(cls, x):
         return cls.require_stride_order(x, list(reversed(range(len(x.get_size())))))
 
@@ -3155,6 +3163,11 @@ class FallbackKernel(ExternKernelAlloc):
             aten._linalg_svd.default,
             aten._linalg_svd.U,
             aten._fused_moving_avg_obs_fq_helper_functional,
+            # if grad_out is contiguous while self is channels last,
+            # eager returns a channels last tensor while in FakeTensorMode we returns
+            # a contiguous tensor.
+            # This causes vgg16 training to fail when enabling layout optimization.
+            aten._adaptive_avg_pool2d_backward,
         )
         context = (
             V.graph.fake_mode if kernel not in fake_incorrect_kernels else nullcontext()
