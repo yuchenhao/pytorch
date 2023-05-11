@@ -888,6 +888,7 @@ class VariableBuilder:
                     curr_size = self.tx.output.frame_state[name]
                     if curr_size != value:
                         curr_size = None
+
                 self.tx.output.frame_state[name] = curr_size
 
                 # TODO: This should be dynamic, as we in general do not

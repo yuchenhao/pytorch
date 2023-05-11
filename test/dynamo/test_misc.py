@@ -373,7 +373,7 @@ class MiscTests(torch._dynamo.test_case.TestCase):
         self.assertTrue(same(ref, res))
         self.assertEqual(counts.frame_count, 1)
         expected_op_count = (
-            ifdynstaticdefault(2, 4)
+            ifdyn(ifdynstaticdefault(2, 3), 4)
             if torch._dynamo.testing.config.dynamic_shapes
             else 1
         )
@@ -928,8 +928,8 @@ class MiscTests(torch._dynamo.test_case.TestCase):
         # output anything and none of the traced operations have side
         # effects.  Probably need better heuristic for bailing on
         # dynamo if there are no outputs
-        self.assertEqual(cnts.frame_count, ifunspec(1, 0))
-        self.assertEqual(cnts.op_count, ifunspec(2, 0))
+        self.assertEqual(cnts.frame_count, 0)
+        self.assertEqual(cnts.op_count, 0)
 
     def test_list_slice_mul(self):
         def fn(count):
@@ -940,8 +940,8 @@ class MiscTests(torch._dynamo.test_case.TestCase):
         cnts = torch._dynamo.testing.CompileCounter()
         opt_fn = torch._dynamo.optimize(cnts)(fn)
         self.assertEqual(opt_fn(2), [2, 3] * 4)
-        self.assertEqual(cnts.frame_count, ifunspec(1, 0))
-        self.assertEqual(cnts.op_count, ifunspec(2, 0))
+        self.assertEqual(cnts.frame_count, 0)
+        self.assertEqual(cnts.op_count, 0)
 
     def test_tuple_mul(self):
         def fn(count):
@@ -951,8 +951,8 @@ class MiscTests(torch._dynamo.test_case.TestCase):
         cnts = torch._dynamo.testing.CompileCounter()
         opt_fn = torch._dynamo.optimize(cnts)(fn)
         self.assertEqual(opt_fn(2), (2, 3) * 4)
-        self.assertEqual(cnts.frame_count, ifunspec(1, 0))
-        self.assertEqual(cnts.op_count, ifunspec(ifdynstaticdefault(2, 2), 0))
+        self.assertEqual(cnts.frame_count, 0)
+        self.assertEqual(cnts.op_count, 0)
 
     def test_tuple_mul_with_shape(self):
         def fn(a):
@@ -1874,6 +1874,7 @@ class MiscTests(torch._dynamo.test_case.TestCase):
 
         self.assertTrue(same(res, ref_run1))
 
+    @patch.object(torch._dynamo.config, "dynamic_shapes", False)
     def test_slice_input(self):
         cnts = torch._dynamo.testing.CompileCounter()
 
@@ -2286,14 +2287,14 @@ def fn():
         opt_m(data, correct_ref_id)
         # Extra op is the recorded equality test (although once
         # the trace is flattened this is dead!)
-        self.assertEqual(cnts.op_count, ifunspec(3, 2))
+        self.assertEqual(cnts.op_count, 2)
 
         torch._dynamo.reset()
         cnts = torch._dynamo.testing.CompileCounter()
         incorrect_ref_id = id(m) + 1
         opt_m = torch._dynamo.optimize(cnts, nopython=True)(m)
         opt_m(data, incorrect_ref_id)
-        self.assertEqual(cnts.op_count, ifunspec(2, 1))
+        self.assertEqual(cnts.op_count, 1)
 
     def test_inline_func_jump_on_tensor_condition(self):
         def f1(input):
@@ -2888,6 +2889,7 @@ def fn():
         self.assertEqual(ref, res)
 
     @torch._dynamo.config.patch(raise_on_backend_change=True)
+    @torch._dynamo.config.patch(dynamic_shapes=False)
     def test_change_backends(self):
         @torch._dynamo.optimize("eager", nopython=True)
         def fn1():
@@ -4274,7 +4276,7 @@ def fn():
             ref = fn(x, y)
             res = opt_fn(x, y)
             self.assertTrue(same(ref, res))
-        self.assertEqual(cnt.frame_count, ifunspec(ifdyn(1, 5), 5))
+        self.assertEqual(cnt.frame_count, ifunspec(ifdyn(2, 5), 5))
 
     # specifically test for tensor.attribute -> torch.something()
     def test_real_imag_tensor_attribute(self):

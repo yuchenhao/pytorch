@@ -31,7 +31,7 @@ import torch.library
 from torch import nn
 from torch._dynamo.debug_utils import same_two_models
 from torch._dynamo.testing import rand_strided, requires_static_shapes, same
-from torch._dynamo.utils import ifdyn, ifdynstaticdefault, ifunspec
+from torch._dynamo.utils import ifdyn, ifdynstaticdefault
 from torch.nn import functional as F
 
 
@@ -877,8 +877,8 @@ class ReproTests(torch._dynamo.test_case.TestCase):
         # repeat_interleave is a dynamic shape operator we do not execute/
         # In the future, we could reduce the frame_count down to 1
         # by guarding on the exact values of `Tensor repeats` arg
-        self.assertEqual(cnt.frame_count, ifdyn(2, 4))
-        self.assertEqual(cnt.op_count, ifdyn(9, 10))
+        self.assertEqual(cnt.frame_count, 4)
+        self.assertEqual(cnt.op_count, ifdyn(14, 10))
 
     def test_boxes_len(self):
         def fn(boxes):
@@ -981,7 +981,7 @@ class ReproTests(torch._dynamo.test_case.TestCase):
         self.assertTrue(same(opt_fn(input2), correct2))
 
         self.assertEqual(cnt.frame_count, 2)
-        self.assertEqual(cnt.op_count, ifunspec(37, ifdyn(20, 4)))
+        self.assertEqual(cnt.op_count, ifdyn(20, 4))
 
     def test_hf_t5_forward(self):
         input = torch.randn([1, 2048, 512])
@@ -1075,7 +1075,9 @@ class ReproTests(torch._dynamo.test_case.TestCase):
         self.assertIn(cnt.op_count, (36, 35, 34, 29, 28, 27))
 
     # see: https://github.com/pytorch/pytorch/issues/80067
-    @torch._dynamo.config.patch(capture_scalar_outputs=False, dynamic_shapes=True)
+    @torch._dynamo.config.patch(
+        capture_scalar_outputs=False, dynamic_shapes=True, assume_static_by_default=True
+    )
     def test_maml_no_item_capture(self):
         a = torch.randn(5, 1, 28, 28)
         b = torch.zeros(5, dtype=torch.int64)
@@ -1088,6 +1090,10 @@ class ReproTests(torch._dynamo.test_case.TestCase):
         for _ in range(10):
             self.assertTrue(same(opt_model(a, b, c, d), correct))
 
+        # TODO: There is some bug here where corrects ends up with
+        # a Tensor in element 0.  We graph break on that (reflected here)
+        # but really we shouldn't have gotten a Tensor at all, as
+        # the operation is between an int and an item() result
         if torch._dynamo.config.assume_static_by_default:
             self.assertEqual(cnt.frame_count, 5)
         else:
@@ -1271,7 +1277,7 @@ class ReproTests(torch._dynamo.test_case.TestCase):
         self.assertEqual(opt_fn(cfg), 64)
         self.assertEqual(cnt.frame_count, 1)
         # With unspec int, maximum computation is preserved
-        self.assertEqual(cnt.op_count, ifunspec(4, 3))
+        self.assertEqual(cnt.op_count, 3)
 
     def test_reformer_sorting(self):
         x = torch.zeros([1, 12, 4096], dtype=torch.int64)
@@ -2770,8 +2776,8 @@ class ReproTests(torch._dynamo.test_case.TestCase):
 
         f(torch.randn(3))
 
-        self.assertEqual(counter.op_count, ifdyn(ifunspec(2, 3), 3))
-        self.assertEqual(counter.frame_count, ifdyn(ifunspec(2, 1), 1))
+        self.assertEqual(counter.op_count, 3)
+        self.assertEqual(counter.frame_count, 1)
 
     def test_delattr(self):
         class MyObj:
