@@ -3,306 +3,333 @@
 from __future__ import annotations
 
 import operator
-
-from typing import Callable, Dict, Mapping, Union
-
-import onnxscript  # type: ignore[import]
-from onnxscript import opset18  # type: ignore[import]
-from onnxscript.function_libs.torch_lib import ops  # type: ignore[import]
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    runtime_checkable,
+    Sequence,
+    Set,
+    TYPE_CHECKING,
+    Union,
+)
 
 import torch
+import torch._ops
+import torch.fx
+from torch.onnx import _constants, _type_utils
 from torch.onnx._internal import _beartype
 
+from torch.onnx._internal.fx import registration
 
-TORCH_ONNX_OPSET = onnxscript.values.Opset(domain="torch.onnx", version=1)
+if TYPE_CHECKING:
+    import onnx.defs  # type: ignore[import]
+    import onnxscript  # type: ignore[import]
 
-
-@onnxscript.script(opset=TORCH_ONNX_OPSET)
-def prims_convert_element_type(tensor, dtype: int):
-    return opset18.Cast(tensor, to=dtype)
-
-
-@onnxscript.script(opset=TORCH_ONNX_OPSET)
-def aten_getitem(self, i):
-    # TODO(justinchuby): Support
-    # i = opset18.Unsqueeze(i, opset18.Constant(value_ints=[0]))
-    # return opset18.Gather(self, i, axis=0)
-    return opset18.SequenceAt(self, i)
-
-
-# A simple lookup table for atenlib functions
-_ATENLIB_FUNCTIONS = {
-    "aten::abs": ops.core.aten_abs,
-    "aten::acos": ops.core.aten_acos,
-    "aten::acosh": ops.core.aten_acosh,
-    "aten::adaptive_avg_pool1d": ops.nn.aten_adaptive_avg_pool1d,
-    "aten::adaptive_avg_pool2d": ops.nn.aten_adaptive_avg_pool2d,
-    "aten::adaptive_avg_pool3d": ops.nn.aten_adaptive_avg_pool3d,
-    "aten::add": ops.core.aten_add,
-    "aten::addmm": ops.core.aten_addmm,
-    "aten::alias": ops.core.aten_alias,
-    "aten::all": ops.core.aten_all,
-    "aten::allclose": ops.core.aten_allclose,
-    "aten::amax": ops.core.aten_amax,
-    "aten::amin": ops.core.aten_amin,
-    "aten::any": ops.core.aten_any,
-    "aten::arange": ops.core.aten_arange_start,
-    "aten::argmax": ops.core.aten_argmax,
-    "aten::argmin": ops.core.aten_argmin,
-    "aten::as_strided": ops.core.aten_as_strided,
-    "aten::asin": ops.core.aten_asin,
-    "aten::asinh": ops.core.aten_asinh,
-    "aten::atan": ops.core.aten_atan,
-    "aten::atanh": ops.core.aten_atanh,
-    "aten::avg_pool2d": ops.nn.aten_avg_pool2d,
-    "aten::baddbmm": ops.core.aten_baddbmm,
-    "aten::bitwise_not": ops.core.aten_bitwise_not_bool,
-    "aten::bmm": ops.core.aten_bmm,
-    "aten::broadcast_to": ops.core.aten_broadcast_to,
-    "aten::cat": ops.core.aten_cat,
-    "aten::ceil": ops.core.aten_ceil,
-    "aten::celu": ops.nn.aten_celu,
-    "aten::chunk": ops.core.aten_chunk,
-    "aten::clamp_max": ops.core.aten_clamp_max,
-    "aten::clamp_min": ops.core.aten_clamp_min,
-    "aten::clamp": ops.core.aten_clamp,
-    "aten::clone": ops.core.aten_clone,
-    "aten::col2im": ops.nn.aten_col2im,
-    "aten::constant_pad_nd": ops.core.aten_constant_pad_nd,
-    "aten::contiguous": ops.core.aten_contiguous,
-    "aten::conv1d": ops.core.aten_conv1d,
-    "aten::conv2d": ops.core.aten_conv2d,
-    "aten::conv3d": ops.core.aten_conv3d,
-    "aten::convolution": ops.core.aten_convolution,
-    "aten::copy": ops.core.aten_copy,
-    "aten::cos": ops.core.aten_cos,
-    "aten::cosh": ops.core.aten_cosh,
-    "aten::cross_entropy_loss": ops.nn.aten_cross_entropy_loss,
-    "aten::cross": ops.core.aten_cross,
-    "aten::cumsum": ops.core.aten_cumsum,
-    "aten::detach": ops.core.aten_detach,
-    "aten::div": ops.core.aten_div,
-    "aten::dot": ops.core.aten_dot,
-    "aten::dropout": ops.core.aten_dropout,
-    "aten::elu": ops.nn.aten_elu,
-    "aten::embedding": ops.core.aten_embedding,
-    "aten::empty_like": ops.core.aten_empty_like,
-    "aten::empty_strided": ops.core.aten_empty_strided,
-    "aten::empty": ops.core.aten_empty,
-    "aten::eq": ops.core.aten_eq,
-    "aten::equal": ops.core.aten_equal,
-    "aten::erf": ops.core.aten_erf,
-    "aten::exp": ops.core.aten_exp,
-    "aten::exp2": ops.core.aten_exp2,
-    "aten::expand_as": ops.core.aten_expand_as,
-    "aten::expand": ops.core.aten_expand,
-    "aten::fill": ops.core.aten_fill,
-    "aten::flip": ops.core.aten_flip,
-    "aten::floor": ops.core.aten_floor,
-    "aten::fmod": ops.core.aten_fmod,
-    "aten::full_like": ops.core.aten_full_like,
-    "aten::full": ops.core.aten_full,
-    "aten::gather": ops.core.aten_gather,
-    "aten::ge": ops.core.aten_ge,
-    "aten::gelu": ops.nn.aten_gelu,
-    "aten::greater_equal": ops.core.aten_greater_equal,
-    "aten::greater": ops.core.aten_greater,
-    "aten::grid_sampler_2d": ops.core.aten_grid_sampler_2d,
-    "aten::grid_sampler": ops.core.aten_grid_sampler,
-    "aten::gt": ops.core.aten_gt,
-    "aten::hardtanh": ops.nn.aten_hardtanh,
-    "aten::index_put": ops.core.aten_index_put,
-    "aten::index_select": ops.core.aten_index_select,
-    "aten::is_nonzero": ops.core.aten_is_nonzero,
-    "aten::is_same_size": ops.core.aten_is_same_size,
-    "aten::isclose": ops.core.aten_isclose,
-    "aten::isfinite": ops.core.aten_isfinite,
-    "aten::isinf": ops.core.aten_isinf,
-    "aten::isnan": ops.core.aten_isnan,
-    "aten::isneginf": ops.core.aten_isneginf,
-    "aten::isposinf": ops.core.aten_isposinf,
-    "aten::layer_norm": ops.core.aten_layer_norm,
-    "aten::le": ops.core.aten_le,
-    "aten::leaky_relu": ops.nn.aten_leaky_relu,
-    "aten::linear": ops.nn.aten_linear,
-    "aten::log_sigmoid": ops.nn.aten_log_sigmoid,
-    "aten::log_sigmoid_forward": ops.nn.aten_log_sigmoid,
-    "aten::log_softmax": ops.special.aten_special_log_softmax,
-    "aten::log": ops.core.aten_log,
-    "aten::log10": ops.core.aten_log10,
-    "aten::log1p": ops.core.aten_log1p,
-    "aten::log2": ops.core.aten_log2,
-    "aten::logaddexp": ops.core.aten_logaddexp,
-    "aten::logaddexp2": ops.core.aten_logaddexp2,
-    "aten::logcumsumexp": ops.core.aten_logcumsumexp,
-    "aten::logdet": ops.core.aten_logdet,
-    "aten::logsumexp": ops.core.aten_logsumexp,
-    "aten::lt": ops.core.aten_lt,
-    "aten::masked_fill": ops.core.aten_masked_fill,
-    "aten::matmul": ops.core.aten_matmul,
-    "aten::max_pool2d_with_indices": ops.nn.aten_max_pool2d_with_indices,
-    "aten::max_pool2d": ops.nn.aten_max_pool2d,
-    "aten::max_pool3d_with_indices": ops.nn.aten_max_pool3d_with_indices,
-    "aten::max_pool3d": ops.nn.aten_max_pool3d,
-    "aten::max": ops.core.aten_max,
-    "aten::maximum": ops.core.aten_maximum,
-    "aten::min": ops.core.aten_min,
-    "aten::minimum": ops.core.aten_minimum,
-    "aten::mm": ops.core.aten_mm,
-    "aten::mse_loss": ops.nn.aten_mse_loss,
-    "aten::mul": ops.core.aten_mul,
-    "aten::narrow": ops.core.aten_narrow,
-    "aten::native_dropout": ops.core.aten_native_dropout,
-    "aten::native_batch_norm": ops.core.aten_native_batch_norm,
-    "aten::native_layer_norm": ops.core.aten_native_layer_norm,
-    "aten::ne": ops.core.aten_ne,
-    "aten::neg": ops.core.aten_neg,
-    "aten::new_empty": ops.core.aten_new_empty,
-    "aten::new_full": ops.core.aten_new_full,
-    "aten::new_ones": ops.core.aten_new_ones,
-    "aten::new_zeros": ops.core.aten_new_zeros,
-    "aten::nll_loss": ops.nn.aten_nll_loss,
-    "aten::nonzero": ops.core.aten_nonzero,
-    "aten::normal": ops.core.aten_normal,
-    "aten::ones_like": ops.core.aten_ones_like,
-    "aten::ones": ops.core.aten_ones,
-    "aten::permute": ops.core.aten_permute,
-    "aten::pow": ops.core.aten_pow,
-    "aten::rand": ops.core.aten_rand,
-    "aten::randn": ops.core.aten_randn,
-    "aten::reciprocal": ops.core.aten_reciprocal,
-    "aten::reflection_pad2d": ops.nn.aten_reflection_pad2d,
-    "aten::relu": ops.nn.aten_relu,
-    "aten::relu6": ops.nn.aten_relu6,
-    "aten::remainder": ops.core.aten_remainder,
-    "aten::repeat": ops.core.aten_repeat,
-    "aten::replication_pad2d": ops.nn.aten_replication_pad2d,
-    "aten::replication_pad3d": ops.nn.aten_replication_pad3d,
-    "aten::reshape": ops.core.aten_reshape,
-    "aten::resolve_conj": ops.core.aten_resolve_conj,
-    "aten::resolve_neg": ops.core.aten_resolve_neg,
-    "aten::round": ops.core.aten_round,
-    "aten::rsqrt": ops.core.aten_rsqrt,
-    "aten::rsub": ops.core.aten_rsub,
-    "aten::scalar_tensor": ops.core.aten_scalar_tensor,
-    "aten::scaled_dot_product_attention": ops.nn.aten_scaled_dot_product_attention,
-    "aten::scatter_add": ops.core.aten_scatter_add,
-    "aten::scatter_reduce": ops.core.aten_scatter_reduce,
-    "aten::select": ops.core.aten_select,
-    "aten::selu": ops.core.aten_selu,
-    "aten::sigmoid": ops.core.aten_sigmoid,
-    "aten::sign": ops.core.aten_sign,
-    "aten::sin": ops.core.aten_sin,
-    "aten::sinh": ops.core.aten_sinh,
-    "aten::slice_scatter": ops.core.aten_slice_scatter,
-    "aten::slice": ops.core.aten_slice,
-    "aten::softmax": ops.special.aten_special_softmax,
-    "aten::split_with_sizes": ops.core.aten_split_with_sizes,
-    "aten::split": ops.core.aten_split,
-    "aten::sqrt": ops.core.aten_sqrt,
-    "aten::squeeze": ops.core.aten_squeeze,
-    "aten::stack": ops.core.aten_stack,
-    "aten::sub": ops.core.aten_sub,
-    "aten::sum": ops.core.aten_sum_dim_IntList,
-    "aten::sym_size": ops.core.aten_sym_size,
-    "aten::t": ops.core.aten_t,
-    "aten::tan": ops.core.aten_tan,
-    "aten::tanh": ops.core.aten_tanh,
-    "aten::topk": ops.core.aten_topk,
-    "aten::transpose": ops.core.aten_transpose,
-    "aten::tril": ops.core.aten_tril,
-    "aten::triu": ops.core.aten_triu,
-    "aten::trunc": ops.core.aten_trunc,
-    "aten::unflatten": ops.core.aten_unflatten,
-    "aten::unsqueeze": ops.core.aten_unsqueeze,
-    "aten::upsample_bilinear2d": ops.nn.aten_upsample_bilinear2d,
-    "aten::upsample_nearest2d": ops.nn.aten_upsample_nearest2d,
-    "aten::var_mean": ops.core.aten_var_mean,
-    "aten::view": ops.core.aten_view,
-    "aten::where": ops.core.aten_where,
-    "aten::xlogy": ops.special.aten_special_xlogy,
-    "aten::zeros_like": ops.core.aten_zeros_like,
-    "aten::zeros": ops.core.aten_zeros,
-    "getitem": aten_getitem,
-    "prims::convert_element_type": prims_convert_element_type,
+_SYMINT_SYMFLOAT_BUILTIN_TO_EXPORTER_KEY_TABLE: Dict[
+    Union[Callable[..., Any], str], torch._ops.OpOverload
+] = {
+    operator.mul: torch.ops.aten.mul.default,  # type: ignore[has-type]
+    operator.add: torch.ops.aten.add.default,  # type: ignore[has-type]
+    operator.pow: torch.ops.aten.pow.int,  # type: ignore[has-type]
+    operator.sub: torch.ops.aten.sub.default,  # type: ignore[has-type]
 }
 
 
-def _create_op_overload_to_exporter_key_table() -> (
-    Mapping[Union[torch._ops.OpOverload, Callable], str]
-):
-    # TODO(justinchuby): Improve how the table is constructed.
-    table: Dict[Union[torch._ops.OpOverload, Callable], str] = {}
+class OnnxDispatcher:
+    """
+    The OnnxDispatcher class finds the best matched function for a given aten operation
+    in the FX exporter. It uses the torch.ops name to find the function. If not found,
+    it falls back to default. Then, it finds the best match among all overloaded
+    functions. If the types match, it selects the function. Otherwise, it finds the
+    nearest upcast/downcast: Float to Float / Int to Int, Int to Float.
 
-    # Some ops in `torch.ops.aten` are not discoverable through `dir(torch.ops.aten)`,
-    # but retrievable via explicit lookup.
-    # https://github.com/pytorch/pytorch/issues/99681
-    # This is a workaround to make sure we register ONNX symbolic functions for these.
-    onnx_supported_aten_lookup_table = [
-        k.split("::")[1] for k in _ATENLIB_FUNCTIONS.keys() if k.startswith("aten::")
-    ]
+    Steps for overloaded function dispatch:
 
-    for op_namespace in (torch.ops.aten, torch.ops.prims):
-        attr_names = dir(op_namespace)
-        if op_namespace is torch.ops.aten:
-            attr_names += onnx_supported_aten_lookup_table
-        for attr_name in attr_names:
-            op_overload_packet = getattr(op_namespace, attr_name)
-            if not isinstance(op_overload_packet, torch._ops.OpOverloadPacket):
-                continue
+    1. Use the torch.ops name to find the function:
+        a. Check if the ATen overload exists.
+        b. If not found, check ATen overload=default.
 
-            exporter_look_up_key = op_overload_packet._qualified_op_name
-            if _ATENLIB_FUNCTIONS.get(exporter_look_up_key) is None:
-                # This aten op doesn't have ONNX exporter.
-                continue
+    2. Find the best match among all overloaded functions:
+        a. If the types match, select the function.
+    """
 
-            for overload_name in op_overload_packet.overloads():
-                op_overload = getattr(op_overload_packet, overload_name)
-                # This line maps torch.ops.aten.add.Tensor, torch.ops.aten.add.Scalar, torch.ops.aten.add.out, etc
-                # to "aten::add". This means the exporter for "aten::add" is used for all overloads of "aten::add".
-                # This is applied to all ops under torch.ops.aten.
-                #
-                # TODO(wechi): in the future, we might want to write individual exporter for each overload, if,
-                # for example, they have different type promotion rules. If so, just map different overloads to
-                # different exporter keys.
+    def __init__(self, registry: registration.OnnxRegistry, opset_version: int):
+        """Initialize the Dispatcher.
 
-                table[op_overload] = op_overload_packet._qualified_op_name
-    return table
+        Args:
+            registry: The registration registry.
+            opset_version: The model opset version.
+        """
+        self._registry = registry
+        self._opset_version = opset_version
+
+    @property
+    def opset_version(self) -> int:
+        """Get the model opset version."""
+        return self._opset_version
+
+    @property
+    def registry(self) -> registration.OnnxRegistry:
+        """Get the registration registry."""
+        return self._registry
+
+    @_beartype.beartype
+    def dispatch(
+        self,
+        node: torch.fx.Node,
+        onnx_args: Sequence,
+        onnx_kwargs: Mapping,
+    ) -> Union["onnxscript.OnnxFunction", "onnxscript.TracedOnnxFunction"]:
+        """Dispatches an ONNX function based on the given FX node, arguments, and keyword arguments.
+
+        Args:
+            node: The TorchFX node to dispatch the function for.
+            onnx_args: The arguments of the ONNX function.
+            onnx_kwargs: The keyword arguments of the ONNX function.
+
+        Returns:
+            Either an `onnxscript.OnnxFunction` or `onnxscript.TracedOnnxFunction` instance based on the dispatch algorithm.
+
+        Raises:
+            RuntimeError: If there are no overloaded functions available for the given FX node.
+        """
+        aten_name = self._get_aten_name(node)
+        function_overloads = self._get_function_overloads(node, aten_name)
+
+        overload_match_ranking: Dict[
+            Union[onnxscript.OnnxFunction, onnxscript.TracedOnnxFunction], int
+        ] = {}
+        # TODO: Cache the OpSchemaWrapper so we don't need to run the init logic everytime
+        for overload_func in function_overloads:
+            function_opschema = OpSchemaWrapper(overload_func.op_schema)
+            if function_opschema.match_inputs(onnx_args, onnx_kwargs):
+                # If the perfect match is found, return the function
+                return overload_func
+            # put the function into candidate list with its match score
+            overload_match_ranking[overload_func] = function_opschema.match_score
+        # TODO(titaiwang): Add diagnostic message saying not perfect match get the best match
+        return max(overload_match_ranking, key=overload_match_ranking.get)  # type: ignore[arg-type]
+
+    def dispatch_opset_version(
+        self, target: int, registered_opsets: Collection[int]
+    ) -> Optional[int]:
+        """Finds the registered opset given a target opset version and the available opsets.
+
+        O(number of registered versions of an op) search is performed to find the most
+        recent version of the op.
+
+        Args:
+            target: The target opset version.
+            registered_opsets: The available opsets.
+
+        Returns:
+            The registered opset version.
+        """
+        if not registered_opsets:
+            return None
+
+        descending_registered_versions = sorted(registered_opsets, reverse=True)
+        # Linear search for the opset version, which is fine since the number of opset
+        # versions is small.
+
+        if target >= _constants.ONNX_BASE_OPSET:
+            # Always look down toward opset 1 when the target is >= ONNX_BASE_OPSET (opset 9).
+            # When a custom op is register at opset 1, we want to be able to discover it as a
+            # fallback for all opsets >= ONNX_BASE_OPSET.
+            for version in descending_registered_versions:
+                if version <= target:
+                    return version
+            return None
+
+        # target < opset 9. This is the legacy behavior to support opset 7 and opset 8.
+        # for caffe2 support. We search up toward opset 9.
+        for version in reversed(descending_registered_versions):
+            # Count back up until _constants.ONNX_BASE_OPSET
+            if target <= version <= _constants.ONNX_BASE_OPSET:
+                return version
+
+        return None
+
+    def _get_aten_name(self, node: torch.fx.Node) -> str:
+        """Get the aten name from the target."""
+        if node.target == operator.getitem:
+            return "aten::getitem"
+        if isinstance(node.target, torch._ops.OpOverloadPacket):
+            # aten::sym_size is the only OverloadPacket that we support.
+            # schema: aten::sym_size(Tensor self, int dim) -> Tensor
+            if node.target != torch.ops.aten.sym_size:
+                raise ValueError(
+                    f"Unsupported OverloadPacket: {node.target}, aten.sym_size is the only allowed OverloadPacket!"
+                )
+            # TODO(titaiwang): aten::sym_size has overload, but fx graph is using
+            # overloadpacket for some reasons.
+            # https://github.com/pytorch/pytorch/issues/97201
+            aten_op_default = node.target.default
+            return aten_op_default.name()  # type: ignore[attr-defined]
+        if node.target in _SYMINT_SYMFLOAT_BUILTIN_TO_EXPORTER_KEY_TABLE:
+            # Make sure it's symint/symfloat consuming builtin ops.
+            for node_arg in node.args:
+                if (not isinstance(node_arg, (torch.fx.Node, int, float))) or (
+                    isinstance(node_arg, torch.fx.Node)
+                    and not isinstance(
+                        node_arg.meta["val"], (torch.SymInt, torch.SymFloat)
+                    )
+                ):
+                    raise ValueError(
+                        f"Unsupported node arg: {node_arg} with builtin function: {node.target},"
+                        " only int/float/SymInt/SymFloat is supported with built-in ops!"
+                    )
+            aten_op = _SYMINT_SYMFLOAT_BUILTIN_TO_EXPORTER_KEY_TABLE[node.target]
+            return aten_op.name()
+        if isinstance(node.target, torch._ops.OpOverload):
+            return node.target.name()
+
+        raise RuntimeError(f"Unknown call_function target: {node.target}")
+
+    def _get_function_overloads(
+        self, node: torch.fx.Node, aten_name: str
+    ) -> List[Union[onnxscript.OnnxFunction, onnxscript.TracedOnnxFunction]]:
+        """Get the function overloads from the registry."""
+        function_group = None
+
+        if self.registry.is_registered_op(aten_name, self.opset_version):
+            function_group = self.registry.get_function_group(aten_name)
+
+        # Fall back to overloadpacket name: eg: aten.add.Tensor -> aten::add
+        elif hasattr(node.target, "overloadpacket") and self.registry.is_registered_op(
+            node.target.overloadpacket._qualified_op_name,  # type: ignore[union-attr]
+            self.opset_version,
+        ):
+            function_group = self.registry.get_function_group(
+                node.target.overloadpacket._qualified_op_name  # type: ignore[union-attr]
+            )
+
+        if function_group is not None:
+            # TODO(titaiwang): dispatch opset version.
+            dispatched_version = self.dispatch_opset_version(
+                self.opset_version, function_group.support_opset()
+            )
+            if dispatched_version is not None:
+                function_overloads = function_group.get(dispatched_version)
+                if function_overloads is not None:
+                    return function_overloads
+
+        raise RuntimeError(
+            f"aten name: {aten_name} is not registered in the ONNX registry!"
+        )
 
 
-# Dictionary that maps torch.ops.aten.* to exporter look up key; e.g.,
-# _OP_OVERLOAD_TO_EXPORTER_KEY_TABLE[torch.add.Tensor] is "aten::add".
-_OP_OVERLOAD_TO_EXPORTER_KEY_TABLE = _create_op_overload_to_exporter_key_table()
-_SYMINT_SYMFLOAT_BUILTIN_TO_EXPORTER_KEY_TABLE = {
-    operator.mul: "aten::mul",
-    operator.add: "aten::add",
-    operator.pow: "aten::pow",
-    operator.sub: "aten::sub",
-}
+# Enable both TorchScriptTensor and torch.Tensor to be tested
+# for dtype in OpSchemaWrapper.
+@runtime_checkable
+class _TensorLike(Protocol):
+    @property
+    def dtype(self) -> Optional[torch.dtype]:
+        ...
+
+
+class OpSchemaWrapper:
+    """
+    The OpSchemaWrapper class is a wrapper for ONNX OpSchema.
+
+    It provides methods to check for input compatibility based on the OpSchema.
+
+    Attributes:
+        schema: The ONNX OpSchema.
+        type_constraints: The type constraints defined in the OpSchema.
+    """
+
+    def __init__(self, op_schema: onnx.defs.OpSchema):
+        """Initialize the OpSchemaWrapper.
+
+        Args:
+            op_schema: The ONNX OpSchema.
+        """
+        self.schema = op_schema
+        self.type_constraints = {
+            # "T": {"tensor(int64)"}
+            constraint.type_param_str: set(constraint.allowed_type_strs)
+            for constraint in op_schema.type_constraints
+        }
+        self.attributes = set(op_schema.attributes)
+        self._matching_score: int = 0
+
+    @property
+    def match_score(self) -> int:
+        """The matching score of the OpSchemaWrapper.
+
+        Returns:
+            The matching score of the OpSchemaWrapper.
+        """
+        return self._matching_score
+
+    def match_inputs(
+        self, args: Sequence[Union[_TensorLike, str, int, float, bool]], kwargs
+    ) -> bool:
+        """Check if the inputs match the OpSchema requirements.
+
+        Args:
+            args: The input arguments.
+            kwargs: The input keyword arguments.
+
+        Returns:
+            True if the inputs match the requirements, False otherwise.
+        """
+
+        # TODO: Refine the logic for it to be more robust
+        # TODO: Handle attributes
+        for schema_input, torch_input in zip(self.schema.inputs, args):
+            torch_input_compatible_types = _find_onnx_data_type(torch_input)
+            allowed_types = self.type_constraints[schema_input.type_str]
+            if allowed_types.intersection(torch_input_compatible_types):
+                # If torch_input_compatible_types is in allowed_types
+                # of this input defined in the OpSchema, we know the function
+                # and the input are not compatible
+                self._matching_score += 1
+        for attr in kwargs:
+            if attr in self.attributes:
+                self._matching_score += 1
+        return self._matching_score == (
+            len(self.schema.inputs) + max(len(self.attributes), len(kwargs))
+        )
 
 
 @_beartype.beartype
-def _create_onnx_friendly_decomposition_table() -> (
-    Dict[torch._ops.OpOverload, Callable]
-):
-    decomposition_table: Dict[torch._ops.OpOverload, Callable] = {}
-    for op_overload, decomp_fn in torch._decomp.decomposition_table.items():
-        # Skip decomposition into "prim::*" ops (defined in 'torch._refs'), because they
-        # are not generally supported by ONNX.
-        # Skip decomposition for op_overload as long as that op_overload has a corresponding ONNX
-        # symbolic function.
-        if (
-            "torch._refs" in decomp_fn.__module__
-            or op_overload in _OP_OVERLOAD_TO_EXPORTER_KEY_TABLE
-        ):
-            continue
-        decomposition_table[op_overload] = decomp_fn
-    return decomposition_table
+def _find_onnx_data_type(
+    torch_input: Optional[Union[_TensorLike, str, int, float, bool, list, tuple]]
+) -> Set[str]:
+    """Convert inputs data type from torch acceptable dtype to the compatible onnx dtype string."""
+    if isinstance(torch_input, _TensorLike) and torch_input.dtype is not None:
+        return _type_utils.TORCH_DTYPE_TO_COMPATIBLE_ONNX_TYPE_STRINGS[
+            torch_input.dtype
+        ]
+    if isinstance(torch_input, (int, float, bool, str)):
+        return _type_utils.TORCH_DTYPE_TO_COMPATIBLE_ONNX_TYPE_STRINGS[
+            type(torch_input)
+        ]
+    if isinstance(torch_input, (list, tuple)) and torch_input:
+        set_dtype = _find_onnx_data_type(torch_input[0])
+        if any(isinstance(input, _TensorLike) for input in torch_input):
+            # NOTE: Any Tensor involved in a list would make it a seq(tensor(onnx_type))
+            return {f"seq({dtype})" for dtype in set_dtype}
+        else:
+            # constant list of non-tensor type
+            return set_dtype
+    if (
+        torch_input is None
+        or (isinstance(torch_input, _TensorLike) and torch_input.dtype is None)
+        or (isinstance(torch_input, (list, tuple)) and not torch_input)
+    ):
+        # NOTE: None, No dtype, and empty list are edge cases, we allow it to be any type to relax the type check
+        # seq(tensor) also goes to here, as it is not supported in torchscript, and it would be None in this case.
+        return set().union(
+            *_type_utils.TORCH_DTYPE_TO_COMPATIBLE_ONNX_TYPE_STRINGS.values()
+        )
 
-
-# This is a subset of PyTorch's built-in aten-to-aten decomposition. If an aten
-# op (e.g., torch.ops.aten.add.Tensor) has exporter, we exclude the op's decomposition
-# function in the DEFAULT_ONNX_EXPORTER_DECOMPOSITION_TABLE.
-DEFAULT_ONNX_EXPORTER_DECOMPOSITION_TABLE: Dict[
-    torch._ops.OpOverload, Callable
-] = _create_onnx_friendly_decomposition_table()
+    raise RuntimeError(f"Unknown input type from input: {torch_input}")
